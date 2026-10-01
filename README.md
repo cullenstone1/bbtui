@@ -8,8 +8,9 @@ review, pull request creation and pipeline monitoring without leaving the termin
 
 Browsing and the first part of reviewing are in place:
 
-- **Dashboard**: starred repositories from the config, recently updated repositories, and
-  server-side search by repository name.
+- **Dashboard**: starred repositories from the config, recently updated repositories,
+  server-side search by repository name, and your open pull requests across the workspace with
+  their approvals, comments and build status.
 - **Pull requests**: open, merged or declined pull requests for a repository, with review status.
 - **Pull request detail**: an overview with merge checks (draft, conflicts, approvals and
   changes requested, builds, open tasks), build statuses (`p` opens the pipeline), reviewers, the rendered description and general
@@ -49,7 +50,8 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | --- | --- | --- |
 | Everywhere | `q` | Quit |
 | Dashboard | `/` | Search repositories (Enter to run, Esc to clear) |
-| | `Enter` | Open the repository's pull requests |
+| | `Enter` | Open the repository's pull requests, or your pull request |
+| | `Tab` | Move between panels |
 | | `r` | Refresh |
 | Pull requests | `Enter` | Open the pull request |
 | | `s` | Cycle open / merged / declined |

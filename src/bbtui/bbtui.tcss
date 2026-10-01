@@ -3,6 +3,7 @@
 #search,
 #starred,
 #others,
+#mine,
 #pull-requests,
 #summary,
 #merge-checks,
@@ -22,6 +23,7 @@
 #search:focus,
 #starred:focus,
 #others:focus,
+#mine:focus,
 #pull-requests:focus,
 #overview-scroll:focus #summary,
 #file-chooser:focus,
@@ -254,4 +256,26 @@ CommentComposer {
 
 #create-submit {
     margin-left: 2;
+}
+
+/* Dashboard columns: repositories on the left, your pull requests on the right. */
+#repo-column {
+    width: 3fr;
+}
+
+#mine {
+    width: 2fr;
+    height: 1fr;
+}
+
+.pr-item {
+    height: 2;
+    padding: 0 1;
+}
+
+.pr-title,
+.pr-meta {
+    width: 1fr;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }

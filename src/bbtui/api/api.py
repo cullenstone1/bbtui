@@ -113,6 +113,23 @@ class BitbucketAPI:
         )
         return [PullRequest.from_api(v) for v in values]
 
+    async def pull_requests_by(
+        self, workspace: str, user_uuid: str, state: str = 'OPEN', limit: int = 50
+    ) -> list[PullRequest]:
+        """Pull requests authored by a user, across every repository in the workspace,
+        most recently updated first."""
+        values = await self.client.get_all(
+            f'/workspaces/{workspace}/pullrequests/{user_uuid}',
+            {
+                'state': state,
+                'sort': '-updated_on',
+                'pagelen': min(limit, 50),
+                'fields': '+values.participants',
+            },
+            limit=limit,
+        )
+        return [PullRequest.from_api(v) for v in values]
+
     async def pull_request(self, workspace: str, repo_slug: str, pr_id: int) -> PullRequest:
         data = await self.client.get_json(
             f'/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}'

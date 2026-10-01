@@ -1,4 +1,12 @@
-from textual.widgets import DataTable, Input, ListView, SelectionList, Static, TextArea
+from textual.widgets import (
+    DataTable,
+    Input,
+    Label,
+    ListView,
+    SelectionList,
+    Static,
+    TextArea,
+)
 
 from bbtui.api import PermissionDeniedError
 from bbtui.app import BBTUI
@@ -39,7 +47,14 @@ class FakeAPI:
         self.posted: list[Comment] = []
 
     async def current_user(self):
-        return User.from_api(user_json(self.me))
+        return User.from_api({**user_json(self.me), 'uuid': f'{{{self.me.lower()}}}'})
+
+    async def pull_requests_by(self, workspace, user_uuid, state='OPEN', limit=50):
+        self.calls.append(('pull_requests_by', workspace, user_uuid))
+        return [
+            PullRequest.from_api(pull_request_json(21, 'acme/widgets', title='Mine', draft=True)),
+            PullRequest.from_api(pull_request_json(22, 'other/gadgets', participants=[])),
+        ]
 
     async def approve(self, workspace, repo_slug, pr_id):
         self.calls.append(('approve', pr_id))
@@ -114,6 +129,8 @@ class FakeAPI:
         ]
 
     async def pull_request_statuses(self, workspace, repo_slug, pr_id):
+        if repo_slug == 'gadgets':
+            raise PermissionDeniedError('no pipelines here', 403)
         return [
             BuildStatus(
                 key='k',
@@ -499,3 +516,33 @@ async def test_create_keeps_your_edits_and_confirms_discarding_them():
         await pilot.press('escape')
         await pilot.pause()
         assert app.screen is not form
+
+
+async def test_my_pull_requests_on_the_dashboard():
+    api = FakeAPI(me='Ada')
+    app = make_app(api)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await settle(app, pilot)
+        mine = app.screen.query_one('#mine', ListView)
+        assert ('pull_requests_by', 'acme', '{ada}') in api.calls
+        items = list(mine.children)
+        assert [item.pr.id for item in items] == [21, 22]
+        first = [str(label.render()) for label in items[0].query(Label)]
+        assert first[0] == '#21 [draft] Mine'
+        # Same workspace shows the slug; reviews, comments and the failing build are summarised.
+        assert first[1].startswith('widgets · ✔ 1/2 ✗1 · 💬 2 · ✗ build · ')
+        second = [str(label.render()) for label in items[1].query(Label)]
+        # Another workspace shows the full name; a failed build lookup just leaves builds out.
+        assert second[1].startswith('other/gadgets · ✔ 0/0 · 💬 2 · ')
+        assert 'build' not in second[1]
+
+        mine.focus()
+        await pilot.press('enter')
+        await settle(app, pilot)
+        assert isinstance(app.screen, PullRequestDetailScreen)
+        assert (app.screen.repo_slug, app.screen.pr_id) == ('widgets', 21)
+        await pilot.press('escape')
+        await settle(app, pilot)
+        assert isinstance(app.screen, DashboardScreen)
+        # Coming back refreshes the list.
+        assert api.calls.count(('pull_requests_by', 'acme', '{ada}')) == 2
