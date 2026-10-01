@@ -1,11 +1,21 @@
-from textual.widgets import DataTable, ListView, Static, TextArea
+from textual.widgets import DataTable, Input, ListView, SelectionList, Static, TextArea
 
 from bbtui.api import PermissionDeniedError
 from bbtui.app import BBTUI
 from bbtui.config import Settings
-from bbtui.models import BuildStatus, Comment, DiffStat, PullRequest, Repository, User
+from bbtui.models import (
+    Branch,
+    BuildStatus,
+    Comment,
+    Commit,
+    DiffStat,
+    PullRequest,
+    Repository,
+    User,
+)
 from bbtui.screens import DashboardScreen, PullRequestDetailScreen, PullRequestsScreen
 from bbtui.screens.composer import CommentComposer
+from bbtui.screens.create_pull_request import CreatePullRequestScreen
 from bbtui.screens.pull_request_detail import known_names
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
 from tests.factories import (
@@ -115,6 +125,35 @@ class FakeAPI:
 
     async def pull_request_open_task_count(self, workspace, repo_slug, pr_id):
         raise PermissionDeniedError('Permission denied: no tasks scope', 403)
+
+    async def branches(self, workspace, repo_slug, search='', limit=30):
+        names = ['develop', 'ABC-9-new-thing', 'ABC-8-old-thing']
+        return [Branch(name) for name in names if search.lower() in name.lower()]
+
+    async def branch_exists(self, workspace, repo_slug, name):
+        return True
+
+    async def development_branch(self, workspace, repo_slug):
+        return 'develop'
+
+    async def default_reviewers(self, workspace, repo_slug):
+        return [
+            User.from_api({**user_json(name), 'uuid': f'{{{name.lower()}}}'})
+            for name in (self.me, 'Cy')
+        ]
+
+    async def commits_between(self, workspace, repo_slug, source, destination, limit=100):
+        return [Commit(hash='abcdef123', message=f'{source} work\n\nbody')]
+
+    async def diffstat_between(self, workspace, repo_slug, source, destination):
+        return [DiffStat.from_api(diffstat_json('modified', 'a.py', 'a.py', 5, 2))]
+
+    async def open_pull_requests_from(self, workspace, repo_slug, source):
+        return []
+
+    async def create_pull_request(self, workspace, repo_slug, **fields):
+        self.calls.append(('create', fields))
+        return PullRequest.from_api(pull_request_json(77, f'{workspace}/{repo_slug}'))
 
     async def pull_request_diff(self, workspace, repo_slug, pr_id):
         self.calls.append(('diff', pr_id))
@@ -393,3 +432,70 @@ async def test_comment_on_a_hunk_header_is_refused():
         await pilot.press('c')
         await pilot.pause()
         assert app.screen is detail
+
+
+async def test_create_pull_request_flow():
+    api = FakeAPI(me='Bob')
+    app = make_app(api)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(PullRequestsScreen(Repository.from_api(repository_json('widgets'))))
+        await settle(app, pilot)
+        await pilot.press('n')
+        await settle(app, pilot)
+        form = app.screen
+        assert isinstance(form, CreatePullRequestScreen)
+        assert form.destination().chosen == 'develop'
+        # Default reviewers are pre-selected, without yourself.
+        assert form.query_one(SelectionList).selected == ['{cy}']
+
+        # The source input has focus; filter and pick the branch.
+        assert app.focused is form.source().query_one(Input)
+        await pilot.press(*'new', 'enter')
+        await pilot.pause(0.4)
+        await settle(app, pilot)
+        assert form.source().chosen == 'ABC-9-new-thing'
+        # One commit: its summary is the title, and it is listed in the description.
+        assert form.query_one('#create-title', Input).value == 'ABC-9-new-thing work'
+        assert form.query_one('#create-description', TextArea).text == '* ABC-9-new-thing work'
+        assert '1 file changed' in str(form.query_one('#create-preview', Static).render())
+
+        await pilot.press('ctrl+s')
+        await settle(app, pilot)
+        assert (
+            'create',
+            {
+                'title': 'ABC-9-new-thing work',
+                'source': 'ABC-9-new-thing',
+                'destination': 'develop',
+                'description': '* ABC-9-new-thing work',
+                'reviewer_uuids': ['{cy}'],
+                'close_source_branch': False,
+                'draft': False,
+            },
+        ) in api.calls
+        assert isinstance(app.screen, PullRequestDetailScreen)
+        assert app.screen.pr_id == 77
+
+
+async def test_create_keeps_your_edits_and_confirms_discarding_them():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await settle(app, pilot)
+        form = CreatePullRequestScreen(Repository.from_api(repository_json('widgets')))
+        app.push_screen(form)
+        await settle(app, pilot)
+        form.query_one('#create-title', Input).value = 'My own title'
+        form.source().choose('ABC-8-old-thing')
+        await settle(app, pilot)
+        assert form.query_one('#create-title', Input).value == 'My own title'
+        assert form.query_one('#create-description', TextArea).text == '* ABC-8-old-thing work'
+
+        form.query_one('#create-description', TextArea).focus()
+        await pilot.press('escape')
+        await pilot.pause()
+        assert app.screen is form
+        await pilot.press('escape')
+        await pilot.pause()
+        assert app.screen is not form

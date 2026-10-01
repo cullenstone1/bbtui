@@ -176,3 +176,71 @@ async def test_comment_payloads():
         {'content': {'raw': 'on removed line'}, 'inline': {'path': 'a.py', 'from': 3}},
         {'content': {'raw': 'reply'}, 'parent': {'id': 9}},
     ]
+
+
+async def test_create_pull_request_payload():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(201, json={'id': 42, 'title': 'T'})
+
+    pr = await make_api(handler).create_pull_request(
+        'acme',
+        'w',
+        title='T',
+        source='feature',
+        destination='develop',
+        description='D',
+        reviewer_uuids=['{u1}'],
+        close_source_branch=True,
+        draft=True,
+    )
+    assert pr.id == 42
+    assert bodies == [
+        (
+            '/2.0/repositories/acme/w/pullrequests',
+            {
+                'title': 'T',
+                'description': 'D',
+                'source': {'branch': {'name': 'feature'}},
+                'destination': {'branch': {'name': 'develop'}},
+                'reviewers': [{'uuid': '{u1}'}],
+                'close_source_branch': True,
+                'draft': True,
+            },
+        )
+    ]
+
+
+async def test_development_branch_falls_back_to_main_branch():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith('/branching-model'):
+            return httpx.Response(403, json={'error': {'message': 'no'}})
+        return httpx.Response(200, json=repository_json('w', mainbranch={'name': 'trunk'}))
+
+    assert await make_api(handler).development_branch('acme', 'w') == 'trunk'
+
+    def model(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={'development': {'name': 'develop'}})
+
+    assert await make_api(model).development_branch('acme', 'w') == 'develop'
+
+
+async def test_branch_queries():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.url.params)))
+        if request.url.path.endswith('/refs/branches/gone'):
+            return httpx.Response(404, json={'error': {'message': 'nope'}})
+        return httpx.Response(200, json={'values': [], 'name': 'x'})
+
+    api = make_api(handler)
+    await api.branches('acme', 'w', 'abc')
+    await api.commits_between('acme', 'w', 'feature', 'develop')
+    assert await api.branch_exists('acme', 'w', 'gone') is False
+    assert seen[0][1]['q'] == 'name ~ "abc"'
+    assert seen[0][1]['sort'] == '-target.date'
+    assert seen[1][1]['include'] == 'feature'
+    assert seen[1][1]['exclude'] == 'develop'

@@ -22,6 +22,14 @@ Browsing and the first part of reviewing are in place:
   editor: on the pull request, inline on a diff line, or as a reply to a comment. A cancelled or
   failed comment is kept as a draft for the same spot.
 
+- **Creating pull requests**: `n` on a repository's pull requests opens a form. The source
+  defaults to your checked-out branch when bbtui runs inside a clone of that repository, and
+  the destination to the repository's development branch. Branches are filtered as you type.
+  The title and description are filled from the commits (one commit: its summary; several: the
+  branch name, with the commits listed) without overwriting your edits. Default reviewers are
+  pre-selected, and the form previews the commits and changed files and warns about an
+  already-open pull request from the same branch.
+
 ## Setup
 
 ```sh
@@ -45,8 +53,12 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | | `r` | Refresh |
 | Pull requests | `Enter` | Open the pull request |
 | | `s` | Cycle open / merged / declined |
+| | `n` | New pull request |
 | | `o` | Open in the browser |
 | | `Esc` | Back |
+| New pull request | `Ctrl+S` | Create |
+| | `↓` (in a branch filter) | Move into the branch list |
+| | `Esc` | Cancel (asks again if you edited the title or description) |
 | Pull request | `1` / `2` | Overview / Diff |
 | | `[` / `]` | Previous / next file |
 | | `Enter` (file list) | Move into the diff; `Esc` goes back to the file list |
@@ -69,6 +81,8 @@ src/bbtui/
   config.py         settings from YAML + BBTUI_* environment variables
   models.py         typed views of Bitbucket REST v2 resources
   merge.py          merge readiness checks
+  git.py            reading the local checkout (default source branch)
+  pull_request_defaults.py   default title and description for new pull requests
   diff.py           unified diff parsing (per file, with old/new line numbers)
   text.py           sanitising remote text, time formatting
   api/client.py     httpx transport: auth, error mapping, pagination
@@ -95,7 +109,7 @@ stripped, so titles, descriptions and comments can't restyle the UI or move the 
 1. ~~Read-only browsing~~
 2. Reviewing: ~~approve, request changes, comment (top-level, inline, replies)~~, edit and delete
    your comments, tasks, merge, decline
-3. Creating pull requests: branch pickers, title/description, reviewers
+3. ~~Creating pull requests~~ (adding reviewers beyond the defaults, and PRs from forks, to come)
 4. Pipelines: runs per repository, step status, step logs (tailing while running), rerun
 
 Merge checks report what the API shows to non-admins. The repository's own merge rules (for

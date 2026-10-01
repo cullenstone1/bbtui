@@ -24,5 +24,8 @@ starred_repos:
 # How many recently updated repositories the dashboard shows.
 recent_repos_limit: 10
 
+# Whether new pull requests close their source branch after merge, by default.
+close_source_branch: false
+
 # A Textual theme, e.g. textual-dark, nord, gruvbox, tokyo-night.
 theme: textual-dark

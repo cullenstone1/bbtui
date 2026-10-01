@@ -22,6 +22,7 @@ class User:
     display_name: str
     account_id: str | None = None
     nickname: str | None = None
+    uuid: str | None = None
 
     @classmethod
     def from_api(cls, data: dict | None) -> 'User':
@@ -30,6 +31,7 @@ class User:
             display_name=data.get('display_name') or data.get('nickname') or 'unknown',
             account_id=data.get('account_id'),
             nickname=data.get('nickname'),
+            uuid=data.get('uuid'),
         )
 
 
@@ -245,4 +247,36 @@ class BuildStatus:
             url=data.get('url'),
             refname=data.get('refname'),
             updated_on=_datetime(data.get('updated_on')),
+        )
+
+
+@dataclass(frozen=True)
+class Branch:
+    name: str
+    updated_on: datetime | None = None
+
+    @classmethod
+    def from_api(cls, data: dict) -> 'Branch':
+        return cls(name=data.get('name') or '', updated_on=_datetime(_get(data, 'target', 'date')))
+
+
+@dataclass(frozen=True)
+class Commit:
+    hash: str
+    message: str
+    author: str = ''
+    date: datetime | None = None
+
+    @property
+    def summary(self) -> str:
+        return self.message.strip().split('\n', 1)[0] if self.message.strip() else ''
+
+    @classmethod
+    def from_api(cls, data: dict) -> 'Commit':
+        author = _get(data, 'author', 'user', 'display_name') or _get(data, 'author', 'raw') or ''
+        return cls(
+            hash=data.get('hash') or '',
+            message=data.get('message') or '',
+            author=author,
+            date=_datetime(data.get('date')),
         )

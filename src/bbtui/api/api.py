@@ -3,10 +3,12 @@
 import asyncio
 from collections.abc import Sequence
 
-from bbtui.api.client import BitbucketClient, BitbucketError
+from bbtui.api.client import BitbucketClient, BitbucketError, NotFoundError
 from bbtui.models import (
+    Branch,
     BuildStatus,
     Comment,
+    Commit,
     DiffStat,
     PullRequest,
     Repository,
@@ -209,3 +211,105 @@ class BitbucketAPI:
             'POST', f'{self._pr_path(workspace, repo_slug, pr_id)}/comments', payload
         )
         return Comment.from_api(data or {'id': 0})
+
+    # --- creating pull requests -----------------------------------------------------------------
+
+    async def branches(
+        self, workspace: str, repo_slug: str, search: str = '', limit: int = 30
+    ) -> list[Branch]:
+        """Branches, most recently committed first, optionally filtered by name."""
+        params: dict = {'sort': '-target.date', 'pagelen': min(limit, MAX_PAGELEN)}
+        if search:
+            params['q'] = f'name ~ {_bbql_string(search)}'
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/refs/branches', params, limit=limit
+        )
+        return [Branch.from_api(v) for v in values]
+
+    async def branch_exists(self, workspace: str, repo_slug: str, name: str) -> bool:
+        try:
+            await self.client.get_json(
+                f'/repositories/{workspace}/{repo_slug}/refs/branches/{name}'
+            )
+        except NotFoundError:
+            return False
+        return True
+
+    async def development_branch(self, workspace: str, repo_slug: str) -> str | None:
+        """The branch pull requests normally target: the branching model's development branch,
+        else the repository's main branch."""
+        try:
+            model = await self.client.get_json(
+                f'/repositories/{workspace}/{repo_slug}/branching-model'
+            )
+        except BitbucketError:
+            model = {}
+        if name := (model.get('development') or {}).get('name'):
+            return name
+        return (await self.repository(workspace, repo_slug)).main_branch
+
+    async def commits_between(
+        self, workspace: str, repo_slug: str, source: str, destination: str, limit: int = 100
+    ) -> list[Commit]:
+        """Commits on `source` that aren't on `destination`, newest first."""
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/commits',
+            {'include': source, 'exclude': destination, 'pagelen': min(limit, MAX_PAGELEN)},
+            limit=limit,
+        )
+        return [Commit.from_api(v) for v in values]
+
+    async def diffstat_between(
+        self, workspace: str, repo_slug: str, source: str, destination: str
+    ) -> list[DiffStat]:
+        """Files changed on `source` since it diverged from `destination`."""
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/diffstat/{source}..{destination}',
+            {'pagelen': MAX_PAGELEN},
+            limit=1000,
+        )
+        return [DiffStat.from_api(v) for v in values]
+
+    async def default_reviewers(self, workspace: str, repo_slug: str) -> list[User]:
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/effective-default-reviewers',
+            {'pagelen': MAX_PAGELEN},
+        )
+        return [User.from_api(v.get('user')) for v in values]
+
+    async def open_pull_requests_from(
+        self, workspace: str, repo_slug: str, source: str
+    ) -> list[PullRequest]:
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/pullrequests',
+            {'q': f'source.branch.name = {_bbql_string(source)} AND state = "OPEN"'},
+            limit=10,
+        )
+        return [PullRequest.from_api(v) for v in values]
+
+    async def create_pull_request(
+        self,
+        workspace: str,
+        repo_slug: str,
+        *,
+        title: str,
+        source: str,
+        destination: str,
+        description: str = '',
+        reviewer_uuids: Sequence[str] = (),
+        close_source_branch: bool = False,
+        draft: bool = False,
+    ) -> PullRequest:
+        payload = {
+            'title': title,
+            'description': description,
+            'source': {'branch': {'name': source}},
+            'destination': {'branch': {'name': destination}},
+            'reviewers': [{'uuid': uuid} for uuid in reviewer_uuids],
+            'close_source_branch': close_source_branch,
+            'draft': draft,
+        }
+        data = await self.client.send(
+            'POST', f'/repositories/{workspace}/{repo_slug}/pullrequests', payload
+        )
+        return PullRequest.from_api(data or {'id': 0})

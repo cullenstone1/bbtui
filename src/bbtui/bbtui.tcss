@@ -173,3 +173,85 @@ CommentComposer {
 #composer-hint {
     margin-top: 1;
 }
+
+/* New pull request form */
+#create-form {
+    height: 1fr;
+}
+
+#create-branches,
+#create-details {
+    height: auto;
+}
+
+.branch-picker,
+#create-title,
+#create-description,
+#create-reviewers,
+#create-preview {
+    border: round $primary-lighten-3;
+    border-title-color: $primary-lighten-3;
+    background: transparent;
+}
+
+.branch-picker:focus-within,
+#create-title:focus,
+#create-description:focus,
+#create-reviewers:focus {
+    border: round $accent;
+    border-title-color: $accent;
+}
+
+.branch-picker {
+    width: 1fr;
+    height: auto;
+}
+
+.branch-picker Input {
+    border: none;
+    height: 1;
+    padding: 0 1;
+}
+
+.branch-picker OptionList {
+    border: none;
+    height: 6;
+    background: transparent;
+}
+
+#create-notes {
+    display: none;
+    padding: 0 2;
+}
+
+#create-title {
+    height: 3;
+}
+
+#create-description {
+    height: 10;
+}
+
+#create-reviewers,
+#create-preview {
+    width: 1fr;
+    height: 10;
+}
+
+#create-preview {
+    padding: 0 1;
+}
+
+#create-actions {
+    height: auto;
+    align: left middle;
+    padding: 0 1;
+}
+
+#create-actions Checkbox {
+    margin-right: 2;
+}
+
+#create-submit {
+    margin-left: 2;
+}
