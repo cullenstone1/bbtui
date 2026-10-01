@@ -109,10 +109,17 @@ class BitbucketClient:
                 return response.content[start:], total
         return response.content, total
 
-    async def send(self, method: str, path: str, json: dict[str, Any] | None = None) -> dict | None:
-        """A write request (POST, PUT, DELETE). Returns the JSON body, if there is one."""
+    async def request(
+        self, method: str, path: str, json: dict[str, Any] | None = None
+    ) -> httpx.Response:
+        """Any request, raising for error statuses; returns the response."""
         response = await self._http.request(method, path, json=json)
         raise_for_status(response)
+        return response
+
+    async def send(self, method: str, path: str, json: dict[str, Any] | None = None) -> dict | None:
+        """A write request (POST, PUT, DELETE). Returns the JSON body, if there is one."""
+        response = await self.request(method, path, json)
         if not response.content or 'json' not in response.headers.get('content-type', ''):
             return None
         return response.json()

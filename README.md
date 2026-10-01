@@ -21,7 +21,10 @@ Browsing and the first part of reviewing are in place:
 
 - **Reviewing**: approve or request changes (each key toggles), and comment with a Markdown
   editor: on the pull request, inline on a diff line, or as a reply to a comment. A cancelled or
-  failed comment is kept as a draft for the same spot.
+  failed comment is kept as a draft for the same spot. Mark drafts ready (or convert back), and
+  merge with the destination branch's allowed strategies (its default pre-selected), an editable
+  commit message and the close-source-branch option; blockers from the merge checks are shown
+  first.
 
 - **Creating pull requests**: `n` on a repository's pull requests opens a form. The source
   defaults to your checked-out branch when bbtui runs inside a clone of that repository, and
@@ -76,6 +79,8 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | | `Enter` (file list) | Move into the diff; `Esc` goes back to the file list |
 | | `a` | Approve, or remove your approval |
 | | `x` | Request changes, or withdraw the request |
+| | `d` | Mark a draft ready for review, or convert back to a draft (asks first) |
+| | `m` | Merge (not drafts) |
 | | `c` | Comment: on the PR (Overview), on the cursor line (diff), or reply to the focused comment |
 | | `Tab` / click | Focus a comment, to reply to it |
 | | `p` | Open the build (failing, else running, else latest) in bbtui |
@@ -90,6 +95,7 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | | `Enter` (steps, failures) | Show that step's log / jump to that line |
 | Diff | `↑`/`↓`, `j`/`k`, PgUp/PgDn, `g`/`G` | Move the line cursor |
 | Comment editor | `Ctrl+S` / `Esc` | Post / cancel (keeps the draft) |
+| Merge dialog | `Ctrl+S` / `Esc` | Merge / cancel |
 
 ## Layout
 
@@ -126,8 +132,8 @@ stripped, so titles, descriptions and comments can't restyle the UI or move the 
 ## Roadmap
 
 1. ~~Read-only browsing~~
-2. Reviewing: ~~approve, request changes, comment (top-level, inline, replies)~~, edit and delete
-   your comments, tasks, merge, decline
+2. Reviewing: ~~approve, request changes, comment (top-level, inline, replies), mark ready,
+   merge~~, edit and delete your comments, tasks, decline
 3. ~~Creating pull requests~~ (adding reviewers beyond the defaults, and PRs from forks, to come)
 4. ~~Pipelines: runs per repository, step status, step logs (tailing while running), rerun~~;
    running custom pipelines with variables, test reports

@@ -22,6 +22,8 @@ from bbtui.merge import Check, merge_checks, verdict
 from bbtui.models import BuildStatus, Comment, DiffStat, PullRequest
 from bbtui.screens.base import BaseScreen
 from bbtui.screens.composer import CommentComposer, CommentTarget
+from bbtui.screens.confirm import ConfirmScreen
+from bbtui.screens.merge import MergeChoice, MergeScreen
 from bbtui.screens.pipeline_run import PipelineRunScreen
 from bbtui.text import ago, clean, one_line, timestamp
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
@@ -130,6 +132,8 @@ class PullRequestDetailScreen(BaseScreen):
         Binding('a', 'toggle_review("approve")', 'Approve'),
         Binding('x', 'toggle_review("changes")', 'Request changes'),
         Binding('c', 'comment', 'Comment'),
+        Binding('d', 'toggle_draft', 'Ready/draft'),
+        Binding('m', 'merge', 'Merge'),
         Binding('1', "show_tab('overview')", 'Overview', show=False),
         Binding('2', "show_tab('diff')", 'Diff', show=False),
         Binding('left_square_bracket', 'step_file(-1)', 'Prev file'),
@@ -148,6 +152,7 @@ class PullRequestDetailScreen(BaseScreen):
         self.names: dict[str, str] = {}
         self.statuses: list[BuildStatus] = []
         self.shown_file: int | None = None
+        self.checks: list[Check] = []
         self.drafts: dict[tuple, str] = {}
 
     def compose(self) -> ComposeResult:
@@ -275,6 +280,7 @@ class PullRequestDetailScreen(BaseScreen):
         merge = self.query_one('#merge-checks', Static)
         if pr.state == 'OPEN':
             checks = merge_checks(pr, diffstat, status_list, task_count)
+            self.checks = checks
             state, label = verdict(checks)
             merge.update(checks_text(checks))
             merge.border_subtitle = Text(label, style=CHECK_MARKS[state][1])
@@ -493,6 +499,92 @@ class PullRequestDetailScreen(BaseScreen):
             )
         else:
             self.app.open_url(url)
+
+    # --- draft and merge ----------------------------------------------------------------------
+
+    def action_toggle_draft(self) -> None:
+        pr = self.pull_request
+        if pr is None:
+            return
+        if pr.state != 'OPEN':
+            self.notify(f'This pull request is {pr.state.lower()}')
+            return
+        if pr.draft:
+            title, question, label = (
+                f'Mark #{pr.id} ready',
+                'Mark this pull request ready for review? Reviewers will be notified.',
+                'Mark ready',
+            )
+        else:
+            title, question, label = (
+                f'Convert #{pr.id} to a draft',
+                'Convert this pull request back to a draft?',
+                'Convert to draft',
+            )
+
+        def confirmed(yes: bool | None) -> None:
+            if yes:
+                self.set_draft(not pr.draft)
+
+        self.app.push_screen(ConfirmScreen(title, question, label), confirmed)
+
+    @work(exclusive=True, group='review', exit_on_error=False)
+    async def set_draft(self, draft: bool) -> None:
+        pr = self.pull_request
+        if pr is None:
+            return
+        try:
+            await self.api.set_draft(self.workspace, self.repo_slug, pr.id, pr.title, draft)
+        except Exception as exc:
+            self.report_write_error(exc, 'Updating the pull request')
+            return
+        self.notify('Converted to a draft' if draft else 'Marked ready for review')
+        await self.reload_overview()
+
+    def action_merge(self) -> None:
+        pr = self.pull_request
+        if pr is None:
+            return
+        if pr.state != 'OPEN':
+            self.notify(f'This pull request is already {pr.state.lower()}')
+            return
+        if pr.draft:
+            self.notify('This pull request is a draft; press d to mark it ready first')
+            return
+        self.open_merge_dialog(pr)
+
+    @work(exclusive=True, group='review', exit_on_error=False)
+    async def open_merge_dialog(self, pr: PullRequest) -> None:
+        try:
+            strategies, default = await self.api.merge_strategies(
+                self.workspace, self.repo_slug, pr.destination_branch
+            )
+        except BitbucketError:
+            strategies, default = [], None  # Fall back to a plain merge commit.
+
+        def chosen(choice: MergeChoice | None) -> None:
+            if choice:
+                self.merge(pr, choice)
+
+        self.app.push_screen(MergeScreen(pr, self.checks, strategies, default), chosen)
+
+    @work(exclusive=True, group='review', exit_on_error=False)
+    async def merge(self, pr: PullRequest, choice: MergeChoice) -> None:
+        self.notify(f'Merging #{pr.id}…')
+        try:
+            await self.api.merge_pull_request(
+                self.workspace,
+                self.repo_slug,
+                pr.id,
+                strategy=choice.strategy,
+                message=choice.message,
+                close_source_branch=choice.close_source_branch,
+            )
+        except Exception as exc:
+            self.report_write_error(exc, 'Merging')
+            return
+        self.notify(f'Merged #{pr.id} into {pr.destination_branch}', markup=False)
+        await self.reload_overview()
 
     def action_open_in_browser(self) -> None:
         if self.pull_request and self.pull_request.html_url:

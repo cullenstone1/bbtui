@@ -124,6 +124,8 @@ class PullRequest:
     draft: bool = False
     participants: tuple[Participant, ...] = field(default_factory=tuple)
     html_url: str | None = None
+    close_source_branch: bool = False
+    merge_commit: str | None = None
 
     @property
     def reviewers(self) -> list[Participant]:
@@ -155,6 +157,8 @@ class PullRequest:
             draft=bool(data.get('draft')),
             participants=tuple(Participant.from_api(p) for p in data.get('participants') or []),
             html_url=_get(data, 'links', 'html', 'href'),
+            close_source_branch=bool(data.get('close_source_branch')),
+            merge_commit=_get(data, 'merge_commit', 'hash'),
         )
 
 

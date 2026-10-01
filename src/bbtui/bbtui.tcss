@@ -353,3 +353,43 @@ ConfirmScreen {
 #confirm-buttons Button {
     margin-left: 2;
 }
+
+/* Merge dialog */
+MergeScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#merge-dialog {
+    width: 90%;
+    max-width: 100;
+    height: auto;
+    max-height: 90%;
+    border: round $accent;
+    border-title-color: $accent;
+    background: $surface;
+    padding: 0 1;
+}
+
+#merge-check-list {
+    margin: 1 0;
+}
+
+#merge-strategy {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#merge-message {
+    height: 8;
+    margin-bottom: 1;
+}
+
+#merge-buttons {
+    height: auto;
+    align: right middle;
+}
+
+#merge-buttons Button {
+    margin-left: 2;
+}

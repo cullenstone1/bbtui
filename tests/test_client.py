@@ -244,3 +244,70 @@ async def test_branch_queries():
     assert seen[0][1]['sort'] == '-target.date'
     assert seen[1][1]['include'] == 'feature'
     assert seen[1][1]['exclude'] == 'develop'
+
+
+async def test_set_draft_and_merge_strategies():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, request.content))
+        if request.url.path.endswith('/refs/branches/master'):
+            return httpx.Response(
+                200,
+                json={
+                    'merge_strategies': ['merge_commit', 'squash'],
+                    'default_merge_strategy': 'squash',
+                },
+            )
+        return httpx.Response(200, json={'id': 5, 'draft': False})
+
+    api = make_api(handler)
+    pr = await api.set_draft('acme', 'w', 5, 'Title', draft=False)
+    assert not pr.draft
+    assert seen[0][:2] == ('PUT', '/2.0/repositories/acme/w/pullrequests/5')
+    assert json.loads(seen[0][2]) == {'title': 'Title', 'draft': False}
+    assert await api.merge_strategies('acme', 'w', 'master') == (
+        ['merge_commit', 'squash'],
+        'squash',
+    )
+
+
+async def test_merge_waits_for_background_merges():
+    polls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            assert json.loads(request.content) == {
+                'type': 'pullrequest',
+                'merge_strategy': 'squash',
+                'close_source_branch': True,
+                'message': 'msg',
+            }
+            return httpx.Response(
+                202,
+                headers={
+                    'location': f'{BASE}/repositories/acme/w/pullrequests/5/merge/task-status/t1'
+                },
+            )
+        polls.append(request.url.path)
+        if len(polls) < 2:
+            return httpx.Response(200, json={'task_status': 'PENDING'})
+        return httpx.Response(
+            200, json={'task_status': 'SUCCESS', 'merge_result': {'id': 5, 'state': 'MERGED'}}
+        )
+
+    pr = await make_api(handler).merge_pull_request(
+        'acme', 'w', 5, strategy='squash', message='msg', close_source_branch=True, poll_seconds=0
+    )
+    assert pr.state == 'MERGED'
+    assert len(polls) == 2
+
+
+async def test_merge_returns_immediately_when_done():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert 'message' not in body  # Fast-forward: no message.
+        return httpx.Response(200, json={'id': 5, 'state': 'MERGED'})
+
+    pr = await make_api(handler).merge_pull_request('acme', 'w', 5, strategy='fast_forward')
+    assert pr.state == 'MERGED'

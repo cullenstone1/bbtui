@@ -121,6 +121,11 @@ class PullRequestsScreen(BaseScreen):
         if url:
             self.app.open_url(url)
 
+    def on_screen_resume(self) -> None:
+        # Coming back from a pull request: it may have been merged, approved or marked ready.
+        if self.pull_requests:
+            self.load_pull_requests()
+
     def action_new_pull_request(self) -> None:
         def created(pr: PullRequest | None) -> None:
             if pr is None:

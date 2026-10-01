@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Sequence
+import time
 
 from bbtui.api.client import BitbucketClient, BitbucketError, NotFoundError
 from bbtui.models import (
@@ -403,3 +404,58 @@ class BitbucketAPI:
     async def stop_pipeline(self, workspace: str, repo_slug: str, pipeline_uuid: str) -> None:
         path = f'{self._pipelines_path(workspace, repo_slug)}/{pipeline_uuid}/stopPipeline'
         await self.client.send('POST', path)
+
+    # --- draft and merge --------------------------------------------------------------------------
+
+    async def set_draft(
+        self, workspace: str, repo_slug: str, pr_id: int, title: str, draft: bool
+    ) -> PullRequest:
+        """Mark a pull request ready for review (`draft=False`) or convert it to a draft."""
+        data = await self.client.send(
+            'PUT', self._pr_path(workspace, repo_slug, pr_id), {'title': title, 'draft': draft}
+        )
+        return PullRequest.from_api(data or {'id': pr_id})
+
+    async def merge_strategies(
+        self, workspace: str, repo_slug: str, branch: str
+    ) -> tuple[list[str], str | None]:
+        """The merge strategies allowed into `branch`, and its default."""
+        data = await self.client.get_json(
+            f'/repositories/{workspace}/{repo_slug}/refs/branches/{branch}',
+            {'fields': 'merge_strategies,default_merge_strategy'},
+        )
+        return list(data.get('merge_strategies') or []), data.get('default_merge_strategy')
+
+    async def merge_pull_request(
+        self,
+        workspace: str,
+        repo_slug: str,
+        pr_id: int,
+        *,
+        strategy: str,
+        message: str | None = None,
+        close_source_branch: bool = False,
+        timeout: float = 300,
+        poll_seconds: float = 2,
+    ) -> PullRequest:
+        """Merge, waiting for Bitbucket to finish if it merges in the background (202)."""
+        payload: dict = {
+            'type': 'pullrequest',
+            'merge_strategy': strategy,
+            'close_source_branch': close_source_branch,
+        }
+        if message:
+            payload['message'] = message
+        response = await self.client.request(
+            'POST', f'{self._pr_path(workspace, repo_slug, pr_id)}/merge', payload
+        )
+        if response.status_code != 202:
+            return PullRequest.from_api(response.json())
+        status_url = response.headers.get('location', '')
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            await asyncio.sleep(poll_seconds)
+            task = await self.client.get_json(status_url)
+            if task.get('task_status') == 'SUCCESS':
+                return PullRequest.from_api(task.get('merge_result') or {'id': pr_id})
+        raise BitbucketError('Bitbucket is still merging; refresh in a minute to see the result')

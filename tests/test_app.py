@@ -1,8 +1,10 @@
 from textual.widgets import (
+    Button,
     DataTable,
     Input,
     Label,
     ListView,
+    RadioSet,
     SelectionList,
     Static,
     TextArea,
@@ -28,6 +30,7 @@ from bbtui.screens import DashboardScreen, PullRequestDetailScreen, PullRequests
 from bbtui.screens.composer import CommentComposer
 from bbtui.screens.confirm import ConfirmScreen
 from bbtui.screens.create_pull_request import CreatePullRequestScreen
+from bbtui.screens.merge import MergeScreen
 from bbtui.screens.pipeline_run import PipelineRunScreen
 from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import known_names
@@ -55,6 +58,8 @@ class FakeAPI:
         self.me = me
         self.posted: list[Comment] = []
         self.run_43_done = False
+        self.draft = False
+        self.merged = False
 
     async def current_user(self):
         return User.from_api({**user_json(self.me), 'uuid': f'{{{self.me.lower()}}}'})
@@ -116,7 +121,23 @@ class FakeAPI:
         ]
 
     async def pull_request(self, workspace, repo_slug, pr_id):
-        return PullRequest.from_api(pull_request_json(pr_id, f'{workspace}/{repo_slug}'))
+        state = 'MERGED' if self.merged else 'OPEN'
+        return PullRequest.from_api(
+            pull_request_json(pr_id, f'{workspace}/{repo_slug}', draft=self.draft, state=state)
+        )
+
+    async def set_draft(self, workspace, repo_slug, pr_id, title, draft):
+        self.calls.append(('set_draft', pr_id, draft))
+        self.draft = draft
+        return await self.pull_request(workspace, repo_slug, pr_id)
+
+    async def merge_strategies(self, workspace, repo_slug, branch):
+        return ['merge_commit', 'squash', 'fast_forward'], 'squash'
+
+    async def merge_pull_request(self, workspace, repo_slug, pr_id, **choice):
+        self.calls.append(('merge', pr_id, choice))
+        self.merged = True
+        return await self.pull_request(workspace, repo_slug, pr_id)
 
     async def pull_request_diffstat(self, workspace, repo_slug, pr_id):
         return [
@@ -802,3 +823,64 @@ async def test_running_builds_on_your_prs_are_watched():
         await settle(app, pilot)
         assert notes == ['✔ Build passed: #21 Mine']
         assert app.watched_builds == {}
+
+
+async def test_mark_ready_and_back_to_draft():
+    api = FakeAPI()
+    api.draft = True
+    app = make_app(api)
+    async with app.run_test(size=(120, 45)) as pilot:
+        detail = await open_detail(app, pilot)
+        # Drafts can't be merged.
+        await pilot.press('m')
+        await pilot.pause()
+        assert app.screen is detail
+        await pilot.press('d')
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.press('y')
+        await settle(app, pilot)
+        assert ('set_draft', 11, False) in api.calls
+        assert detail.pull_request is not None and not detail.pull_request.draft
+
+        await pilot.press('d', 'y')
+        await settle(app, pilot)
+        assert ('set_draft', 11, True) in api.calls
+
+
+async def test_merge_dialog():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 50)) as pilot:
+        detail = await open_detail(app, pilot)
+        await pilot.press('m')
+        await settle(app, pilot)
+        dialog = app.screen
+        assert isinstance(dialog, MergeScreen)
+        # The repository's default strategy is chosen, and blockers (Cy requested changes,
+        # the build failed) turn the button into "Merge anyway".
+        assert dialog.strategy == 'squash'
+        assert str(dialog.query_one('#merge-confirm', Button).label).startswith('Merge anyway')
+        message = dialog.query_one('#merge-message', TextArea)
+        assert message.text.startswith('Merged in feature/11 (pull request #11)\n\nPR 11')
+        assert 'Approved-by: Bob' in message.text
+
+        # Fast-forward takes no message.
+        dialog.query_one(RadioSet).focus()
+        await pilot.press('down', 'down', 'enter')
+        await pilot.pause()
+        assert dialog.strategy == 'fast_forward'
+        assert not message.display
+
+        await pilot.press('ctrl+s')
+        await settle(app, pilot)
+        assert (
+            'merge',
+            11,
+            {'strategy': 'fast_forward', 'message': None, 'close_source_branch': False},
+        ) in api.calls
+        assert app.screen is detail
+        assert detail.pull_request is not None and detail.pull_request.state == 'MERGED'
+        await pilot.press('m')
+        await pilot.pause()
+        assert app.screen is detail  # Already merged.
