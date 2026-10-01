@@ -1,0 +1,97 @@
+/* Rounded, titled borders on every panel, as in jiratui; the focused panel lights up. */
+
+#search,
+#starred,
+#others,
+#pull-requests,
+#summary,
+#reviewers,
+#description,
+#general-comments,
+#file-chooser,
+#diff-view,
+.comment {
+    border: round $primary-lighten-3;
+    border-title-color: $primary-lighten-3;
+    border-subtitle-color: $primary-lighten-3;
+    background: transparent;
+}
+
+#search:focus,
+#starred:focus,
+#others:focus,
+#pull-requests:focus,
+#overview-scroll:focus #summary,
+#file-chooser:focus,
+#diff-view:focus {
+    border: round $accent;
+    border-title-color: $accent;
+    border-subtitle-color: $accent;
+}
+
+#search {
+    height: 3;
+    padding: 0 1;
+}
+
+#dashboard {
+    height: 1fr;
+}
+
+#starred {
+    height: auto;
+    max-height: 50%;
+}
+
+#others,
+#pull-requests,
+#diff-view {
+    height: 1fr;
+}
+
+#file-chooser {
+    height: auto;
+    max-height: 12;
+}
+
+#general-comments {
+    height: auto;
+    padding: 0 1;
+}
+
+#summary,
+#reviewers {
+    height: auto;
+    padding: 0 1;
+}
+
+#description {
+    height: auto;
+    margin: 0;
+    padding: 0 1;
+}
+
+.diff-lines {
+    width: auto;
+}
+
+.comment {
+    height: auto;
+    margin: 0;
+    padding: 0 1;
+}
+
+#diff-view .comment {
+    width: 100%;
+    max-width: 120;
+}
+
+TabPane {
+    padding: 0;
+}
+
+/* Markdown spaces blocks with a bottom margin; drop it on the last block so boxes fit snugly. */
+.comment > MarkdownBlock:last-child,
+#description > MarkdownBlock:last-child {
+    margin-bottom: 0;
+}
