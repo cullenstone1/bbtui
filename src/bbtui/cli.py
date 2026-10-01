@@ -5,6 +5,7 @@ import sys
 from bbtui import __version__
 from bbtui.api import BitbucketAPI, BitbucketClient, BitbucketError
 from bbtui.config import Settings, config_file_path
+from bbtui.terminal import apply_colour_override
 
 CONFIG_EXAMPLE = """\
 username: you@example.com   # your Atlassian account email
@@ -57,6 +58,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.check:
         sys.exit(asyncio.run(check(api)))
 
+    # Must happen before Textual is imported: it reads TEXTUAL_COLOR_SYSTEM at import time.
+    colour_note = apply_colour_override()
+
     from bbtui.app import BBTUI
 
-    BBTUI(settings, api).run()
+    BBTUI(settings, api, colour_note).run()

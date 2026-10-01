@@ -1,3 +1,5 @@
+import os
+
 from textual import work
 from textual.app import App
 from textual.binding import Binding
@@ -17,10 +19,12 @@ class BBTUI(App):
     CSS_PATH = 'bbtui.tcss'
     BINDINGS = [Binding('q', 'quit', 'Quit')]
 
-    def __init__(self, settings: Settings, api: BitbucketAPI):
+    def __init__(self, settings: Settings, api: BitbucketAPI, colour_note: str | None = None):
         super().__init__()
         self.settings = settings
         self.api = api
+        self.colour_note = colour_note
+        """Why the colour mode was reduced at startup, if it was."""
         self._current_user: User | None = None
         self.watched_builds: dict[str, WatchedBuild] = {}
         """Running builds by URL; checked every WATCH_SECONDS."""
@@ -37,6 +41,22 @@ class BBTUI(App):
         else:
             self.notify(f'Unknown theme {self.settings.theme!r}', severity='warning', markup=False)
         self.push_screen(DashboardScreen())
+        full_colour = self.console.color_system in ('256', 'truecolor')
+        if not full_colour:
+            # Pass named colours (red, green, ...) straight to the terminal's own palette;
+            # converting them to RGB first and back down to 16 colours turns red into magenta.
+            self.ansi_color = True
+        if self.colour_note or not full_colour:
+            reason = self.colour_note or (
+                f'your terminal reports only 16 colours (TERM={os.environ.get("TERM", "?")})'
+            )
+            mode = '256 colours' if self.console.color_system == '256' else '16 colours'
+            self.notify(
+                f'Using {mode}: {reason}. For full colour see "Colours" in the README.',
+                severity='warning' if not full_colour else 'information',
+                timeout=12,
+                markup=False,
+            )
         self.set_interval(WATCH_SECONDS, self.check_watched_builds)
 
     def watch_build(self, url: str, build: WatchedBuild) -> None:

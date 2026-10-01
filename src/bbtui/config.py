@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     """How many recently updated repositories to show on the dashboard."""
     close_source_branch: bool = False
     """Whether new pull requests close their source branch on merge, by default."""
+    syntax_theme: str | None = None
+    """A Pygments style for diffs (e.g. monokai, dracula, github-dark); defaults to one that
+    suits the app theme."""
     theme: str = 'textual-dark'
     """The name of a Textual theme."""
     base_url: str = DEFAULT_BASE_URL

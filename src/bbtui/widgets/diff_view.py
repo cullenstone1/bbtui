@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.binding import Binding
@@ -9,6 +10,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from bbtui.diff import DiffLine, FileDiff
+from bbtui.highlight import DEFAULT_THEMES, highlight_diff
 from bbtui.models import DiffStat
 from bbtui.text import one_line
 from bbtui.widgets.comments import CommentView, Thread
@@ -26,13 +28,60 @@ LINE_STYLES = {
 CODE_KINDS = ('added', 'removed', 'context')
 
 
-def diff_line_text(line: DiffLine, gutter: int) -> Text:
+TINTS = {
+    True: {'added': Style(bgcolor='#12301c'), 'removed': Style(bgcolor='#3a1518')},
+    False: {'added': Style(bgcolor='#dafbe1'), 'removed': Style(bgcolor='#ffebe9')},
+}
+"""Backgrounds for added/removed lines, for dark and light themes."""
+MARKER_STYLES = {'added': 'bold green', 'removed': 'bold red', 'context': 'dim'}
+
+
+def has_full_colour(color_system: str | None) -> bool:
+    """Whether the terminal can show subtle background tints and syntax colours. With only 16
+    colours they collapse to black/grey, so diffs fall back to green/red text instead."""
+    return color_system in ('256', 'truecolor')
+
+
+def code_body(line: DiffLine, highlighted: Text | None) -> Text:
+    """A code line's content without its +/-/space prefix: syntax highlighted when possible,
+    else coloured by kind."""
+    body = highlighted.copy() if highlighted is not None else None
+    if body is None:
+        body = Text(line.text[1:], style=LINE_STYLES[line.kind])
+    body.no_wrap = True
+    body.expand_tabs(4)
+    return body
+
+
+def diff_line_text(
+    line: DiffLine,
+    gutter: int,
+    body: Text | None = None,
+    width: int = 0,
+    dark: bool = True,
+    tint: bool = True,
+) -> Text:
+    """One diff line: line numbers, then the content. Code lines get their +/- marker and, for
+    added/removed lines, a background tint padded to `width` so the tint forms a block."""
     text = Text(no_wrap=True, overflow='ignore')
     old = '' if line.old is None else str(line.old)
     new = '' if line.new is None else str(line.new)
     text.append(f'{old:>{gutter}} {new:>{gutter}} ', style='dim')
-    text.append(line.text, style=LINE_STYLES[line.kind])
-    text.expand_tabs(4)
+    if line.kind not in CODE_KINDS:
+        content = Text(line.text, style=LINE_STYLES[line.kind])
+        content.expand_tabs(4)
+        text.append_text(content)
+        return text
+    start = len(text)
+    text.append(line.text[:1] or ' ', style=MARKER_STYLES[line.kind])
+    body = body if body is not None else code_body(line, None)
+    text.append_text(body)
+    if not tint:
+        return text
+    if padding := width - body.cell_len:
+        text.append(' ' * padding)
+    if style := TINTS[dark].get(line.kind):
+        text.stylize(style, start)
     return text
 
 
@@ -189,6 +238,18 @@ class DiffView(ScrollableContainer):
 
         numbers = [n for line in self.lines for n in (line.old, line.new) if n is not None]
         gutter = len(str(max(numbers, default=0)))
+        dark = self.app.current_theme.dark
+        theme = getattr(self.app, 'settings', None)
+        theme = (theme.syntax_theme if theme else None) or DEFAULT_THEMES[dark]
+        path = stat.new_path or stat.old_path or ''
+        full_colour = has_full_colour(self.app.console.color_system)
+        highlighted = highlight_diff(file_diff, path, theme) if self.lines and full_colour else {}
+        bodies = {
+            index: code_body(line, highlighted.get(index))
+            for index, line in enumerate(self.lines)
+            if line.kind in CODE_KINDS
+        }
+        width = max((body.cell_len for body in bodies.values()), default=0)
         texts: list[Text] = []
         start = 0
 
@@ -202,7 +263,9 @@ class DiffView(ScrollableContainer):
             start = end
 
         for index, line in enumerate(self.lines):
-            texts.append(diff_line_text(line, gutter))
+            texts.append(
+                diff_line_text(line, gutter, bodies.get(index), width, dark, tint=full_colour)
+            )
             if index in anchored:
                 flush(index + 1)
                 for thread in anchored[index]:

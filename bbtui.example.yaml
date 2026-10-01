@@ -28,5 +28,9 @@ recent_repos_limit: 10
 # Whether new pull requests close their source branch after merge, by default.
 close_source_branch: false
 
+# A Pygments style for syntax highlighting in diffs (e.g. monokai, dracula, github-dark,
+# one-dark). By default one is picked to suit the app theme.
+# syntax_theme: monokai
+
 # A Textual theme, e.g. textual-dark, nord, gruvbox, tokyo-night.
 theme: textual-dark

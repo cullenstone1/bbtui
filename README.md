@@ -14,7 +14,8 @@ Browsing and the first part of reviewing are in place:
 - **Pull requests**: open, merged or declined pull requests for a repository, with review status.
 - **Pull request detail**: an overview with merge checks (draft, conflicts, approvals and
   changes requested, builds, open tasks), build statuses (`p` opens the pipeline), reviewers, the rendered description and general
-  comments, and a diff tab with a file chooser on top and one file's diff below. Inline comment
+  comments, and a diff tab with a file chooser on top and one file's diff below, syntax
+  highlighted by file type with added/removed lines tinted. Inline comment
   threads appear under the lines they refer to; comments on lines no longer in the diff are shown
   at the top of the file. Descriptions and comments are rendered as Markdown, with @-mentions
   shown as names.
@@ -106,6 +107,7 @@ src/bbtui/
   models.py         typed views of Bitbucket REST v2 resources
   merge.py          merge readiness checks
   logs.py           pipeline log decoding, sanitising, failure detection
+  highlight.py      syntax highlighting for diffs (per hunk, old and new sides)
   git.py            reading the local checkout (default source branch)
   pull_request_defaults.py   default title and description for new pull requests
   diff.py           unified diff parsing (per file, with old/new line numbers)
@@ -120,6 +122,23 @@ src/bbtui/
 
 Remote text is always rendered as `rich.text.Text` rather than markup, and control characters are
 stripped, so titles, descriptions and comments can't restyle the UI or move the terminal cursor.
+
+## Colours
+
+bbtui needs a terminal that advertises 256 colours or more; with only 16 (e.g. tmux's default
+`TERM=screen`), diff tints and theme colours collapse to greys, and bbtui falls back to plain
+green/red diffs and says so at startup. For tmux, add to `~/.tmux.conf`:
+
+```
+set -g default-terminal "tmux-256color"
+set -as terminal-features ",*:RGB"
+```
+
+and make sure the outer terminal exports `COLORTERM=truecolor` (most modern terminals do).
+
+When tmux can't pass 24-bit colour through (no `RGB` feature), bbtui notices and draws with 256
+colours itself, which keeps diff tints green and red rather than letting tmux turn them grey.
+Set `TEXTUAL_COLOR_SYSTEM` (`truecolor`, `256`, `standard`) to override.
 
 ## Development
 
@@ -142,5 +161,5 @@ Merge checks report what the API shows to non-admins. The repository's own merge
 example "2 approvals required") are branch restrictions, which need repository admin access to
 read, so "No blockers found" doesn't guarantee Bitbucket will allow the merge.
 
-Known gaps: the diff isn't syntax-highlighted by language (only +/− colouring), and @-mentions
-of people who aren't on the pull request stay as raw `@{account_id}`.
+Known gaps: changed words within a line aren't highlighted yet, and @-mentions of people who
+aren't on the pull request stay as raw `@{account_id}`.
