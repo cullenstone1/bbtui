@@ -116,3 +116,20 @@ async def test_pull_requests_request_participants():
     await make_api(handler).pull_requests('acme', 'widgets')
     assert seen['fields'] == '+values.participants'
     assert seen['state'] == 'OPEN'
+
+
+async def test_statuses_and_open_tasks():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith('/statuses'):
+            return httpx.Response(
+                200,
+                json={'values': [{'key': 'k', 'name': 'Pipeline', 'state': 'SUCCESSFUL'}]},
+            )
+        return httpx.Response(
+            200, json={'values': [{'state': 'UNRESOLVED'}, {'state': 'RESOLVED'}]}
+        )
+
+    api = make_api(handler)
+    statuses = await api.pull_request_statuses('acme', 'widgets', 1)
+    assert [(s.name, s.state) for s in statuses] == [('Pipeline', 'SUCCESSFUL')]
+    assert await api.pull_request_open_task_count('acme', 'widgets', 1) == 1

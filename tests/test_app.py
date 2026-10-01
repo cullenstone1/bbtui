@@ -1,8 +1,9 @@
-from textual.widgets import DataTable, ListView
+from textual.widgets import DataTable, ListView, Static
 
+from bbtui.api import PermissionDeniedError
 from bbtui.app import BBTUI
 from bbtui.config import Settings
-from bbtui.models import Comment, DiffStat, PullRequest, Repository
+from bbtui.models import BuildStatus, Comment, DiffStat, PullRequest, Repository
 from bbtui.screens import DashboardScreen, PullRequestDetailScreen, PullRequestsScreen
 from bbtui.screens.pull_request_detail import known_names
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
@@ -66,6 +67,19 @@ class FakeAPI:
             ),
         ]
 
+    async def pull_request_statuses(self, workspace, repo_slug, pr_id):
+        return [
+            BuildStatus(
+                key='k',
+                name='Pipeline',
+                state='FAILED',
+                url='https://bitbucket.org/acme/widgets/pipelines/results/42',
+            )
+        ]
+
+    async def pull_request_open_task_count(self, workspace, repo_slug, pr_id):
+        raise PermissionDeniedError('Permission denied: no tasks scope', 403)
+
     async def pull_request_diff(self, workspace, repo_slug, pr_id):
         self.calls.append(('diff', pr_id))
         return DIFF
@@ -108,6 +122,16 @@ async def test_dashboard_to_pull_request_detail_and_back():
         detail = app.screen
         assert isinstance(detail, PullRequestDetailScreen)
         assert detail.pr_id == 11
+        # Builds and merge checks; the failing task lookup leaves the rest of the page intact.
+        checks = str(detail.query_one('#merge-checks', Static).render())
+        assert 'Changes requested by Cy' in checks
+        assert '1 of 1 build failed' in checks
+        assert 'open task' not in checks
+        assert '#42' in str(detail.query_one('#builds', Static).render())
+        opened = []
+        app.open_url = lambda url, **kwargs: opened.append(url)
+        await pilot.press('p')
+        assert opened == ['https://bitbucket.org/acme/widgets/pipelines/results/42']
         # General comments are on the overview; inline ones are not.
         overview = list(detail.query_one('#general-comments').query(CommentView))
         assert [(card.comment.id, card.depth) for card in overview] == [(1, 0), (2, 1)]

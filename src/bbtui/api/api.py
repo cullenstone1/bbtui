@@ -4,7 +4,15 @@ import asyncio
 from collections.abc import Sequence
 
 from bbtui.api.client import BitbucketClient, BitbucketError
-from bbtui.models import Comment, DiffStat, PullRequest, Repository, User, Workspace
+from bbtui.models import (
+    BuildStatus,
+    Comment,
+    DiffStat,
+    PullRequest,
+    Repository,
+    User,
+    Workspace,
+)
 
 MAX_PAGELEN = 100
 """The largest `pagelen` most Bitbucket collections accept."""
@@ -133,3 +141,22 @@ class BitbucketAPI:
             limit=limit,
         )
         return [Comment.from_api(v) for v in values]
+
+    async def pull_request_statuses(
+        self, workspace: str, repo_slug: str, pr_id: int
+    ) -> list[BuildStatus]:
+        """Build statuses (pipelines and other CI) for the pull request's commits."""
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}/statuses',
+            {'pagelen': MAX_PAGELEN, 'sort': '-updated_on'},
+            limit=200,
+        )
+        return [BuildStatus.from_api(v) for v in values]
+
+    async def pull_request_open_task_count(self, workspace: str, repo_slug: str, pr_id: int) -> int:
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}/tasks',
+            {'pagelen': MAX_PAGELEN},
+            limit=1000,
+        )
+        return sum(1 for v in values if v.get('state') == 'UNRESOLVED')

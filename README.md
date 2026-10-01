@@ -11,7 +11,8 @@ Milestone 1 (read-only browsing) is in place:
 - **Dashboard**: starred repositories from the config, recently updated repositories, and
   server-side search by repository name.
 - **Pull requests**: open, merged or declined pull requests for a repository, with review status.
-- **Pull request detail**: an overview with reviewers, the rendered description and general
+- **Pull request detail**: an overview with merge checks (draft, conflicts, approvals and
+  changes requested, builds, open tasks), build statuses (`p` opens the pipeline), reviewers, the rendered description and general
   comments, and a diff tab with a file chooser on top and one file's diff below. Inline comment
   threads appear under the lines they refer to; comments on lines no longer in the diff are shown
   at the top of the file. Descriptions and comments are rendered as Markdown, with @-mentions
@@ -45,6 +46,7 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | Pull request | `1` / `2` | Overview / Diff |
 | | `[` / `]` | Previous / next file |
 | | `Enter` (file list) | Move into the diff; `Esc` goes back to the file list |
+| | `p` | Open the build (failing, else running, else latest) |
 | | `o` | Open in the browser |
 | | `r` | Refresh |
 | | `Esc` | Back |
@@ -56,6 +58,7 @@ src/bbtui/
   cli.py            entry point (`bbtui`, `bbtui --check`)
   config.py         settings from YAML + BBTUI_* environment variables
   models.py         typed views of Bitbucket REST v2 resources
+  merge.py          merge readiness checks
   diff.py           unified diff parsing (per file, with old/new line numbers)
   text.py           sanitising remote text, time formatting
   api/client.py     httpx transport: auth, error mapping, pagination
@@ -83,6 +86,10 @@ stripped, so titles, descriptions and comments can't restyle the UI or move the 
 2. Reviewing: approve, request changes, comment (top-level, inline, replies), merge, decline
 3. Creating pull requests: branch pickers, title/description, reviewers
 4. Pipelines: runs per repository, step status, step logs (tailing while running), rerun
+
+Merge checks report what the API shows to non-admins. The repository's own merge rules (for
+example "2 approvals required") are branch restrictions, which need repository admin access to
+read, so "No blockers found" doesn't guarantee Bitbucket will allow the merge.
 
 Known gaps: the diff isn't syntax-highlighted by language (only +/− colouring), and @-mentions
 of people who aren't on the pull request stay as raw `@{account_id}`.

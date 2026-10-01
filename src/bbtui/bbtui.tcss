@@ -5,6 +5,8 @@
 #others,
 #pull-requests,
 #summary,
+#merge-checks,
+#builds,
 #reviewers,
 #description,
 #general-comments,
@@ -60,9 +62,20 @@
 }
 
 #summary,
+#merge-checks,
+#builds,
 #reviewers {
     height: auto;
     padding: 0 1;
+}
+
+#checks-row {
+    height: auto;
+}
+
+#merge-checks,
+#builds {
+    width: 1fr;
 }
 
 #description {

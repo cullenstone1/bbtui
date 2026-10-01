@@ -206,6 +206,10 @@ class DiffStat:
         return self.new_path or self.old_path or ''
 
     @property
+    def is_conflicted(self) -> bool:
+        return self.status in ('merge conflict', 'local deleted', 'remote deleted')
+
+    @property
     def status_letter(self) -> str:
         return {'added': 'A', 'removed': 'D', 'renamed': 'R', 'modified': 'M'}.get(self.status, '!')
 
@@ -217,4 +221,28 @@ class DiffStat:
             new_path=_get(data, 'new', 'path'),
             lines_added=data.get('lines_added') or 0,
             lines_removed=data.get('lines_removed') or 0,
+        )
+
+
+@dataclass(frozen=True)
+class BuildStatus:
+    """A commit build status, as reported by Bitbucket Pipelines or another CI."""
+
+    key: str
+    name: str
+    state: str
+    """`SUCCESSFUL`, `FAILED`, `INPROGRESS` or `STOPPED`."""
+    url: str | None = None
+    refname: str | None = None
+    updated_on: datetime | None = None
+
+    @classmethod
+    def from_api(cls, data: dict) -> 'BuildStatus':
+        return cls(
+            key=data.get('key') or '',
+            name=data.get('name') or data.get('key') or 'build',
+            state=data.get('state') or '',
+            url=data.get('url'),
+            refname=data.get('refname'),
+            updated_on=_datetime(data.get('updated_on')),
         )
