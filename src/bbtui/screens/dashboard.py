@@ -9,11 +9,13 @@ from textual.widgets import Footer, Header, Input, Label, ListItem, ListView
 
 from bbtui.api.api import split_repo_name
 from bbtui.merge import build_check
-from bbtui.models import BuildStatus, PullRequest, Repository
+from bbtui.models import BuildStatus, Pipeline, PullRequest, Repository, Schedule
 from bbtui.screens.base import BaseScreen
+from bbtui.screens.pipeline_run import PipelineRunScreen, status_text
 from bbtui.screens.pull_request_detail import PullRequestDetailScreen
 from bbtui.screens.pull_requests import PullRequestsScreen
-from bbtui.text import one_line, relative
+from bbtui.text import duration, one_line, relative
+from bbtui.watch import WatchedBuild
 
 
 class RepositoryItem(ListItem):
@@ -86,6 +88,35 @@ class PullRequestItem(ListItem):
             )
 
 
+class NightlyItem(ListItem):
+    """The latest run of a scheduled pipeline: what it is, then how it went."""
+
+    def __init__(self, repo: Repository, schedule: Schedule, run: Pipeline | None):
+        super().__init__()
+        self.repo = repo
+        self.schedule = schedule
+        self.run = run
+
+    def compose(self) -> ComposeResult:
+        title = Text(one_line(self.repo.slug), style='bold')
+        title.append(f'  {one_line(self.schedule.name)}', style='cyan')
+        if self.schedule.ref_name and self.schedule.ref_name != self.schedule.name:
+            title.append(f' on {one_line(self.schedule.ref_name)}', style='dim')
+        if not self.schedule.enabled:
+            title.append('  (disabled)', style='dim')
+        if self.run is None:
+            status = Text('no recent scheduled run', style='dim')
+        else:
+            status = status_text(self.run.status)
+            status.append(f'  #{self.run.build_number}', style='bold')
+            status.append(f' · {relative(self.run.created_on)}', style='dim')
+            if self.run.duration_seconds:
+                status.append(f' · took {duration(self.run.duration_seconds)}', style='dim')
+        with Vertical(classes='pr-item'):
+            yield Label(title, classes='pr-title')
+            yield Label(status, classes='pr-meta')
+
+
 class DashboardScreen(BaseScreen):
     AUTO_FOCUS = '#starred'
     BINDINGS = [
@@ -101,7 +132,9 @@ class DashboardScreen(BaseScreen):
             with Vertical(id='repo-column'):
                 yield ListView(id='starred')
                 yield ListView(id='others')
-            yield ListView(id='mine')
+            with Vertical(id='right-column'):
+                yield ListView(id='nightly')
+                yield ListView(id='mine')
         yield Footer()
 
     def on_mount(self) -> None:
@@ -110,12 +143,16 @@ class DashboardScreen(BaseScreen):
         self.query_one('#starred', ListView).border_title = 'Starred'
         self.query_one('#others', ListView).border_title = 'Recently updated'
         self.query_one('#mine', ListView).border_title = 'My pull requests'
+        self.query_one('#nightly', ListView).border_title = 'Scheduled pipelines'
+        self.query_one('#nightly', ListView).display = False
         self.load_dashboard()
 
     def on_screen_resume(self) -> None:
-        # Coming back from a pull request: its reviews or builds may have changed.
+        # Coming back from a pull request or a run: reviews or builds may have changed.
         if self.query_one('#mine', ListView).children:
             self.load_mine()
+        if self.query_one('#nightly', ListView).children:
+            self.load_nightly()
 
     @work(exclusive=True, group='mine', exit_on_error=False)
     async def load_mine(self) -> None:
@@ -149,6 +186,18 @@ class DashboardScreen(BaseScreen):
             for pr, result in zip(pull_requests, statuses, strict=True)
         )
         mine.index = min(index or 0, len(pull_requests) - 1)
+        for pr, result in zip(pull_requests, statuses, strict=True):
+            if not isinstance(result, list):
+                continue
+            pr_workspace, pr_slug = pr.repository.split('/', 1)
+            for status in result:
+                if status.state == 'INPROGRESS' and status.url:
+                    self.bbtui.watch_build(
+                        status.url,
+                        WatchedBuild(
+                            pr_workspace, pr_slug, pr.id, status.key, f'#{pr.id} {pr.title}'
+                        ),
+                    )
 
     @work(exclusive=True, group='starred', exit_on_error=False)
     async def load_starred(self) -> None:
@@ -214,6 +263,49 @@ class DashboardScreen(BaseScreen):
     def load_dashboard(self) -> None:
         self.load_starred()
         self.load_mine()
+        self.load_nightly()
+
+    @work(exclusive=True, group='nightly', exit_on_error=False)
+    async def load_nightly(self) -> None:
+        """Latest runs of the scheduled pipelines (e.g. nightlies) in your starred repositories."""
+        nightly = self.query_one('#nightly', ListView)
+        workspace = self.settings.workspace or ''
+        try:
+            repos, _ = await self.api.repositories(self.settings.starred_repos, workspace)
+            found = await asyncio.gather(
+                *(self.api.schedules(repo.workspace, repo.slug) for repo in repos),
+                return_exceptions=True,
+            )
+            pairs = [
+                (repo, schedule)
+                for repo, schedules in zip(repos, found, strict=True)
+                if isinstance(schedules, list)
+                for schedule in schedules
+            ]
+            runs = await asyncio.gather(
+                *(
+                    self.api.latest_scheduled_run(repo.workspace, repo.slug, schedule)
+                    for repo, schedule in pairs
+                ),
+                return_exceptions=True,
+            )
+        except Exception as exc:
+            self.report_error(exc, 'Loading scheduled pipelines')
+            return
+        index = nightly.index
+        await nightly.clear()
+        nightly.display = bool(pairs)
+        if not pairs:
+            return
+        await nightly.extend(
+            NightlyItem(repo, schedule, run if isinstance(run, Pipeline) else None)
+            for (repo, schedule), run in zip(pairs, runs, strict=True)
+        )
+        nightly.index = min(index or 0, len(pairs) - 1)
+        failed = sum(
+            1 for run in runs if isinstance(run, Pipeline) and run.status in ('FAILED', 'ERROR')
+        )
+        nightly.border_subtitle = Text(f'{failed} failed', 'red') if failed else str(len(pairs))
         self.load_others(self.query_one('#search', Input).value.strip())
 
     @on(Input.Submitted, '#search')
@@ -225,6 +317,9 @@ class DashboardScreen(BaseScreen):
     def open_selected(self, event: ListView.Selected) -> None:
         if isinstance(event.item, RepositoryItem):
             self.app.push_screen(PullRequestsScreen(event.item.repo))
+        elif isinstance(event.item, NightlyItem) and event.item.run:
+            repo, run = event.item.repo, event.item.run
+            self.app.push_screen(PipelineRunScreen(repo.workspace, repo.slug, run.build_number))
         elif isinstance(event.item, PullRequestItem):
             workspace, slug = event.item.pr.repository.split('/', 1)
             self.app.push_screen(PullRequestDetailScreen(workspace, slug, event.item.pr.id))

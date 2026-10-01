@@ -10,8 +10,11 @@ from bbtui.models import (
     Comment,
     Commit,
     DiffStat,
+    Pipeline,
+    PipelineStep,
     PullRequest,
     Repository,
+    Schedule,
     User,
     Workspace,
 )
@@ -330,3 +333,73 @@ class BitbucketAPI:
             'POST', f'/repositories/{workspace}/{repo_slug}/pullrequests', payload
         )
         return PullRequest.from_api(data or {'id': 0})
+
+    # --- pipelines --------------------------------------------------------------------------------
+
+    def _pipelines_path(self, workspace: str, repo_slug: str) -> str:
+        return f'/repositories/{workspace}/{repo_slug}/pipelines'
+
+    async def pipelines(self, workspace: str, repo_slug: str, limit: int = 50) -> list[Pipeline]:
+        """Pipeline runs, newest first."""
+        values = await self.client.get_all(
+            self._pipelines_path(workspace, repo_slug),
+            {'sort': '-created_on', 'pagelen': min(limit, MAX_PAGELEN)},
+            limit=limit,
+        )
+        return [Pipeline.from_api(v) for v in values]
+
+    async def pipeline(self, workspace: str, repo_slug: str, run: int | str) -> Pipeline:
+        """A run by build number or UUID."""
+        path = f'{self._pipelines_path(workspace, repo_slug)}/{run}'
+        return Pipeline.from_api(await self.client.get_json(path))
+
+    async def pipeline_steps(
+        self, workspace: str, repo_slug: str, pipeline_uuid: str
+    ) -> list[PipelineStep]:
+        values = await self.client.get_all(
+            f'{self._pipelines_path(workspace, repo_slug)}/{pipeline_uuid}/steps',
+            {'pagelen': MAX_PAGELEN},
+        )
+        return [PipelineStep.from_api(v) for v in values]
+
+    async def step_log(
+        self, workspace: str, repo_slug: str, pipeline_uuid: str, step_uuid: str, start: int = 0
+    ) -> tuple[bytes, int | None]:
+        """A step's log from byte `start`, and the log's total size so far."""
+        path = f'{self._pipelines_path(workspace, repo_slug)}/{pipeline_uuid}/steps/{step_uuid}/log'
+        try:
+            return await self.client.get_bytes(path, start)
+        except NotFoundError:
+            return b'', start  # The step hasn't produced a log yet.
+
+    async def schedules(self, workspace: str, repo_slug: str) -> list[Schedule]:
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/pipelines_config/schedules',
+            {'pagelen': MAX_PAGELEN},
+        )
+        return [Schedule.from_api(v) for v in values]
+
+    async def latest_scheduled_run(
+        self, workspace: str, repo_slug: str, schedule: Schedule, search: int = 200
+    ) -> Pipeline | None:
+        """The newest run started by `schedule`, looking through the last `search` runs."""
+        for run in await self.pipelines(workspace, repo_slug, limit=search):
+            if (
+                run.trigger == 'SCHEDULE'
+                and run.selector_type == schedule.selector_type
+                and run.selector_pattern == schedule.selector_pattern
+                and (run.ref_name or '') == schedule.ref_name
+            ):
+                return run
+        return None
+
+    async def rerun_pipeline(self, workspace: str, repo_slug: str, run: Pipeline) -> Pipeline:
+        """Start a new run with the same target (branch, pull request or custom pipeline)."""
+        data = await self.client.send(
+            'POST', f'{self._pipelines_path(workspace, repo_slug)}/', {'target': run.target}
+        )
+        return Pipeline.from_api(data or {})
+
+    async def stop_pipeline(self, workspace: str, repo_slug: str, pipeline_uuid: str) -> None:
+        path = f'{self._pipelines_path(workspace, repo_slug)}/{pipeline_uuid}/stopPipeline'
+        await self.client.send('POST', path)

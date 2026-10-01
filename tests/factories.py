@@ -73,3 +73,40 @@ def diffstat_json(status: str, old: str | None, new: str | None, added=1, remove
         'lines_added': added,
         'lines_removed': removed,
     }
+
+
+def pipeline_json(number: int, status: str = 'SUCCESSFUL', **overrides) -> dict:
+    if status in ('RUNNING', 'PENDING'):
+        state = {
+            'name': 'IN_PROGRESS' if status == 'RUNNING' else 'PENDING',
+            'stage': {'name': status},
+        }
+    else:
+        state = {'name': 'COMPLETED', 'result': {'name': status}}
+    data = {
+        'uuid': f'{{run-{number}}}',
+        'build_number': number,
+        'state': state,
+        'trigger': {'name': 'PUSH'},
+        'creator': user_json('Ada'),
+        'created_on': '2026-10-01T04:51:00+00:00',
+        'duration_in_seconds': 1202,
+        'target': {
+            'type': 'pipeline_pullrequest_target',
+            'selector': {'type': 'pull-requests', 'pattern': '**'},
+            'source': 'feature',
+            'destination': 'master',
+            'commit': {'hash': 'abcdef1234', 'links': {'self': {'href': 'x'}}},
+        },
+    }
+    data.update(overrides)
+    return data
+
+
+def step_json(name: str, status: str = 'SUCCESSFUL') -> dict:
+    state = (
+        {'name': 'IN_PROGRESS', 'stage': {'name': 'RUNNING'}}
+        if status == 'RUNNING'
+        else {'name': 'COMPLETED', 'result': {'name': status}}
+    )
+    return {'uuid': f'{{step-{name}}}', 'name': name, 'state': state, 'duration_in_seconds': 60}

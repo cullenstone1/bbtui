@@ -3,7 +3,14 @@
 #search,
 #starred,
 #others,
+#nightly,
 #mine,
+#pipelines,
+#run-summary,
+#run-steps,
+#run-failures,
+#run-log,
+#confirm,
 #pull-requests,
 #summary,
 #merge-checks,
@@ -23,7 +30,12 @@
 #search:focus,
 #starred:focus,
 #others:focus,
+#nightly:focus,
 #mine:focus,
+#pipelines:focus,
+#run-steps:focus,
+#run-failures:focus,
+#run-log:focus,
 #pull-requests:focus,
 #overview-scroll:focus #summary,
 #file-chooser:focus,
@@ -263,8 +275,16 @@ CommentComposer {
     width: 3fr;
 }
 
-#mine {
+#right-column {
     width: 2fr;
+}
+
+#nightly {
+    height: auto;
+    max-height: 40%;
+}
+
+#mine {
     height: 1fr;
 }
 
@@ -278,4 +298,58 @@ CommentComposer {
     width: 1fr;
     text-wrap: nowrap;
     text-overflow: ellipsis;
+}
+
+/* Pipelines */
+#pipelines,
+#run-log {
+    height: 1fr;
+}
+
+#run-top {
+    height: auto;
+}
+
+#run-summary {
+    height: auto;
+    padding: 0 1;
+}
+
+#run-steps {
+    height: auto;
+    max-height: 7;
+}
+
+#run-failures {
+    height: auto;
+    max-height: 8;
+}
+
+#log-search {
+    dock: bottom;
+    margin-bottom: 1;
+}
+
+ConfirmScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#confirm {
+    width: 70;
+    height: auto;
+    border: round $warning;
+    border-title-color: $warning;
+    background: $surface;
+    padding: 1 2;
+}
+
+#confirm-buttons {
+    height: auto;
+    margin-top: 1;
+    align: right middle;
+}
+
+#confirm-buttons Button {
+    margin-left: 2;
 }

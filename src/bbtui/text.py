@@ -72,3 +72,15 @@ def relative(when: datetime | None, now: datetime | None = None) -> str:
 def timestamp(when: datetime | None) -> str:
     """A local `YYYY-MM-DD HH:MM` timestamp."""
     return when.astimezone().strftime('%Y-%m-%d %H:%M') if when else ''
+
+
+def duration(seconds: int | float | None) -> str:
+    """`45s`, `20m 2s`, `1h 3m`."""
+    if seconds is None:
+        return ''
+    seconds = int(seconds)
+    if seconds < 60:
+        return f'{seconds}s'
+    if seconds < 3600:
+        return f'{seconds // 60}m {seconds % 60}s'
+    return f'{seconds // 3600}h {seconds % 3600 // 60}m'

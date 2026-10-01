@@ -35,6 +35,11 @@ class User:
         )
 
 
+def same_user(a: User, b: User) -> bool:
+    """Whether two user references are the same person (by account id or UUID)."""
+    return bool((a.account_id and a.account_id == b.account_id) or (a.uuid and a.uuid == b.uuid))
+
+
 @dataclass(frozen=True)
 class Workspace:
     slug: str
@@ -279,4 +284,138 @@ class Commit:
             message=data.get('message') or '',
             author=author,
             date=_datetime(data.get('date')),
+        )
+
+
+def _strip_links(data):
+    """A copy of an API object without `links`, for sending it back (e.g. a pipeline target)."""
+    if isinstance(data, dict):
+        return {k: _strip_links(v) for k, v in data.items() if k != 'links'}
+    if isinstance(data, list):
+        return [_strip_links(v) for v in data]
+    return data
+
+
+def _pipeline_status(state: dict | None) -> str:
+    """One status for a pipeline or step state: the result when completed (`SUCCESSFUL`,
+    `FAILED`, `ERROR`, `STOPPED`, `EXPIRED`), else `PENDING`, `RUNNING`, `PAUSED`, ..."""
+    state = state or {}
+    if result := (state.get('result') or {}).get('name'):
+        return result
+    if stage := (state.get('stage') or {}).get('name'):
+        return stage
+    return {'IN_PROGRESS': 'RUNNING'}.get(state.get('name') or '', state.get('name') or '')
+
+
+RUNNING_STATUSES = ('PENDING', 'RUNNING', 'IN_PROGRESS', 'PAUSED', 'HALTED')
+
+
+@dataclass(frozen=True)
+class PipelineStep:
+    uuid: str
+    name: str
+    status: str
+    started_on: datetime | None = None
+    completed_on: datetime | None = None
+    duration_seconds: int | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self.status in RUNNING_STATUSES
+
+    @classmethod
+    def from_api(cls, data: dict) -> 'PipelineStep':
+        return cls(
+            uuid=data.get('uuid') or '',
+            name=data.get('name') or 'step',
+            status=_pipeline_status(data.get('state')),
+            started_on=_datetime(data.get('started_on')),
+            completed_on=_datetime(data.get('completed_on')),
+            duration_seconds=data.get('duration_in_seconds'),
+        )
+
+
+@dataclass(frozen=True)
+class Pipeline:
+    uuid: str
+    build_number: int
+    status: str
+    trigger: str = ''
+    """`PUSH`, `MANUAL` or `SCHEDULE`."""
+    creator: User | None = None
+    created_on: datetime | None = None
+    completed_on: datetime | None = None
+    duration_seconds: int | None = None
+    ref_name: str | None = None
+    """The branch or tag built, for branch and custom pipelines."""
+    selector_type: str = ''
+    """`branches`, `tags`, `pull-requests`, `custom` or `default`."""
+    selector_pattern: str = ''
+    source_branch: str | None = None
+    """For pull request pipelines."""
+    destination_branch: str | None = None
+    commit: str | None = None
+    target: dict = field(default_factory=dict)
+    """The raw target, without links; posting it again re-runs the pipeline."""
+
+    @property
+    def is_running(self) -> bool:
+        return self.status in RUNNING_STATUSES
+
+    @property
+    def description(self) -> str:
+        """What was built: `PR feature → master`, `custom: nightly on master`, `master`."""
+        if self.selector_type == 'pull-requests':
+            return f'PR {self.source_branch or "?"} → {self.destination_branch or "?"}'
+        if self.selector_type == 'custom':
+            return f'custom: {self.selector_pattern} on {self.ref_name or "?"}'
+        return self.ref_name or self.selector_pattern or ''
+
+    @classmethod
+    def from_api(cls, data: dict) -> 'Pipeline':
+        target = data.get('target') or {}
+        selector = target.get('selector') or {}
+        return cls(
+            uuid=data.get('uuid') or '',
+            build_number=int(data.get('build_number') or 0),
+            status=_pipeline_status(data.get('state')),
+            trigger=(data.get('trigger') or {}).get('name') or '',
+            creator=User.from_api(data['creator']) if data.get('creator') else None,
+            created_on=_datetime(data.get('created_on')),
+            completed_on=_datetime(data.get('completed_on')),
+            duration_seconds=data.get('duration_in_seconds'),
+            ref_name=target.get('ref_name'),
+            selector_type=selector.get('type') or '',
+            selector_pattern=selector.get('pattern') or '',
+            source_branch=target.get('source'),
+            destination_branch=target.get('destination'),
+            commit=_get(target, 'commit', 'hash'),
+            target=_strip_links(target),
+        )
+
+
+@dataclass(frozen=True)
+class Schedule:
+    uuid: str
+    enabled: bool
+    cron: str
+    ref_name: str
+    selector_type: str
+    selector_pattern: str
+
+    @property
+    def name(self) -> str:
+        return self.selector_pattern or self.ref_name
+
+    @classmethod
+    def from_api(cls, data: dict) -> 'Schedule':
+        target = data.get('target') or {}
+        selector = target.get('selector') or {}
+        return cls(
+            uuid=data.get('uuid') or '',
+            enabled=bool(data.get('enabled')),
+            cron=data.get('cron_pattern') or '',
+            ref_name=target.get('ref_name') or '',
+            selector_type=selector.get('type') or '',
+            selector_pattern=selector.get('pattern') or '',
         )

@@ -17,20 +17,29 @@ from bbtui.models import (
     Comment,
     Commit,
     DiffStat,
+    Pipeline,
+    PipelineStep,
     PullRequest,
     Repository,
+    Schedule,
     User,
 )
 from bbtui.screens import DashboardScreen, PullRequestDetailScreen, PullRequestsScreen
 from bbtui.screens.composer import CommentComposer
+from bbtui.screens.confirm import ConfirmScreen
 from bbtui.screens.create_pull_request import CreatePullRequestScreen
+from bbtui.screens.pipeline_run import PipelineRunScreen
+from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import known_names
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
+from bbtui.widgets.log_view import LogView
 from tests.factories import (
     comment_json,
     diffstat_json,
+    pipeline_json,
     pull_request_json,
     repository_json,
+    step_json,
     user_json,
 )
 
@@ -45,6 +54,7 @@ class FakeAPI:
         self.calls: list[tuple] = []
         self.me = me
         self.posted: list[Comment] = []
+        self.run_43_done = False
 
     async def current_user(self):
         return User.from_api({**user_json(self.me), 'uuid': f'{{{self.me.lower()}}}'})
@@ -172,6 +182,73 @@ class FakeAPI:
         self.calls.append(('create', fields))
         return PullRequest.from_api(pull_request_json(77, f'{workspace}/{repo_slug}'))
 
+    # pipelines: run 42 failed (two steps, the second failed); run 43 is running
+    LOG = (
+        'compiling\n'
+        'src/a.cpp:1: error: first problem\n'
+        + ''.join(f'line {i}\n' for i in range(100))
+        + '\x1b[1;31m[FAIL] the real problem\x1b[0m\n'
+        'done\n'
+    )
+
+    def run_json(self, number):
+        if number == 43:
+            return pipeline_json(43, 'SUCCESSFUL' if self.run_43_done else 'RUNNING')
+        return pipeline_json(number, 'FAILED')
+
+    async def pipeline(self, workspace, repo_slug, run):
+        self.calls.append(('pipeline', repo_slug, run))
+        return Pipeline.from_api(self.run_json(int(run)))
+
+    async def pipelines(self, workspace, repo_slug, limit=50):
+        return [
+            Pipeline.from_api(self.run_json(43)),
+            Pipeline.from_api(pipeline_json(42, 'FAILED', creator=user_json('Cy'))),
+            Pipeline.from_api(pipeline_json(41, 'SUCCESSFUL')),
+        ]
+
+    async def pipeline_steps(self, workspace, repo_slug, pipeline_uuid):
+        if pipeline_uuid == '{run-43}':
+            return [
+                PipelineStep.from_api(
+                    step_json('Build', 'SUCCESSFUL' if self.run_43_done else 'RUNNING')
+                )
+            ]
+        return [
+            PipelineStep.from_api(step_json('Lint')),
+            PipelineStep.from_api(step_json('Build and Test', 'FAILED')),
+        ]
+
+    async def step_log(self, workspace, repo_slug, pipeline_uuid, step_uuid, start=0):
+        self.calls.append(('step_log', step_uuid, start))
+        if pipeline_uuid == '{run-43}':
+            data = b'starting\n' + (b'finished\n' if self.run_43_done else b'')
+        else:
+            data = self.LOG.encode() if step_uuid == '{step-Build and Test}' else b'lint ok\n'
+        return data[start:], len(data)
+
+    async def rerun_pipeline(self, workspace, repo_slug, run):
+        self.calls.append(('rerun', run.build_number))
+        return Pipeline.from_api(pipeline_json(44, 'PENDING'))
+
+    async def stop_pipeline(self, workspace, repo_slug, pipeline_uuid):
+        self.calls.append(('stop', pipeline_uuid))
+
+    async def schedules(self, workspace, repo_slug):
+        if repo_slug != 'widgets':
+            return []
+        return [Schedule('{s}', True, '0 51 4 * * ? *', 'master', 'custom', 'nightly')]
+
+    async def latest_scheduled_run(self, workspace, repo_slug, schedule):
+        return Pipeline.from_api(
+            pipeline_json(
+                40,
+                'FAILED',
+                trigger={'name': 'SCHEDULE'},
+                target={'ref_name': 'master', 'selector': {'type': 'custom', 'pattern': 'nightly'}},
+            )
+        )
+
     async def pull_request_diff(self, workspace, repo_slug, pr_id):
         self.calls.append(('diff', pr_id))
         return DIFF
@@ -220,10 +297,14 @@ async def test_dashboard_to_pull_request_detail_and_back():
         assert '1 of 1 build failed' in checks
         assert 'open task' not in checks
         assert '#42' in str(detail.query_one('#builds', Static).render())
-        opened = []
-        app.open_url = lambda url, **kwargs: opened.append(url)
+        # `p` opens the Bitbucket Pipelines build in bbtui.
         await pilot.press('p')
-        assert opened == ['https://bitbucket.org/acme/widgets/pipelines/results/42']
+        await settle(app, pilot)
+        assert isinstance(app.screen, PipelineRunScreen)
+        assert app.screen.build_number == 42
+        assert app.screen.label == '#11 PR 11'
+        await pilot.press('escape')
+        await settle(app, pilot)
         # General comments are on the overview; inline ones are not.
         overview = list(detail.query_one('#general-comments').query(CommentView))
         assert [(card.comment.id, card.depth) for card in overview] == [(1, 0), (2, 1)]
@@ -546,3 +627,178 @@ async def test_my_pull_requests_on_the_dashboard():
         assert isinstance(app.screen, DashboardScreen)
         # Coming back refreshes the list.
         assert api.calls.count(('pull_requests_by', 'acme', '{ada}')) == 2
+
+
+async def open_run(app, pilot, number: int) -> PipelineRunScreen:
+    await settle(app, pilot)
+    app.push_screen(PipelineRunScreen('acme', 'widgets', number, 'label'))
+    await settle(app, pilot)
+    assert isinstance(app.screen, PipelineRunScreen)
+    return app.screen
+
+
+async def test_failed_run_lands_on_the_last_likely_failure():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(140, 45)) as pilot:
+        screen = await open_run(app, pilot, 42)
+        log = screen.query_one(LogView)
+        # The failed step is shown, and the cursor is on its last failure line.
+        assert screen.step_index == 1
+        assert len(log.lines) == 104
+        assert log.failures == [1, 102]
+        assert log.current == 102
+        assert app.focused is log
+        # Scrolled so the failure is in view.
+        assert (
+            log.scroll_offset.y <= 102 < log.scroll_offset.y + log.scrollable_content_region.height
+        )
+        failures = screen.query_one('#run-failures', DataTable)
+        assert failures.display and failures.row_count == 2
+
+        await pilot.press('e')
+        assert log.current == 1  # Wraps around to the first failure.
+        await pilot.press('E')
+        assert log.current == 102
+
+        await pilot.press('slash')
+        await pilot.press(*'line 50', 'enter')
+        await pilot.pause()
+        assert log.current == 52
+        await pilot.press('n')
+        assert log.current == 52  # Only one match.
+
+        # Picking the other step loads its log.
+        screen.query_one('#run-steps', DataTable).focus()
+        await pilot.press('up', 'enter')
+        await settle(app, pilot)
+        assert screen.step_index == 0
+        assert log.lines == ['lint ok']
+
+
+async def test_rerun_and_stop_ask_first():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(140, 45)) as pilot:
+        await open_run(app, pilot, 42)
+        await pilot.press('R')
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.press('n')
+        await pilot.pause()
+        assert ('rerun', 42) not in api.calls
+
+        await pilot.press('R')
+        await pilot.pause()
+        await pilot.press('y')
+        await settle(app, pilot)
+        assert ('rerun', 42) in api.calls
+        assert isinstance(app.screen, PipelineRunScreen) and app.screen.build_number == 44
+
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(140, 45)) as pilot:
+        await open_run(app, pilot, 43)
+        await pilot.press('s')
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.press('y')
+        await settle(app, pilot)
+        assert ('stop', '{run-43}') in api.calls
+
+
+async def test_running_run_tails_its_log_and_notifies_when_done():
+    api = FakeAPI()
+    app = make_app(api)
+    notes = []
+    async with app.run_test(size=(140, 45)) as pilot:
+        app.notify = lambda message, **kwargs: notes.append(message)
+        screen = await open_run(app, pilot, 43)
+        log = screen.query_one(LogView)
+        assert log.lines == ['starting']
+        assert screen.poller is not None
+
+        api.run_43_done = True
+        screen.poll()
+        await settle(app, pilot)
+        assert log.lines == ['starting', 'finished']
+        # Only the new bytes were fetched.
+        assert ('step_log', '{step-Build}', len(b'starting\n')) in api.calls
+        assert screen.poller is None
+        assert notes == ['✔ Build passed: label']
+
+
+async def test_pipelines_list_filters_and_opens_runs():
+    api = FakeAPI(me='Ada')
+    app = make_app(api)
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(PullRequestsScreen(Repository.from_api(repository_json('widgets'))))
+        await settle(app, pilot)
+        await pilot.press('P')
+        await settle(app, pilot)
+        screen = app.screen
+        assert isinstance(screen, PipelinesScreen)
+        table = screen.query_one(DataTable)
+        assert table.row_count == 3
+        await pilot.press('f')
+        assert table.row_count == 1  # Only the failed run.
+        await pilot.press('m')
+        assert table.row_count == 0  # Run 42 was Cy's.
+        await pilot.press('f')
+        assert table.row_count == 2  # Mine: 43 and 41.
+        await pilot.press('enter')
+        await settle(app, pilot)
+        assert isinstance(app.screen, PipelineRunScreen)
+        assert app.screen.build_number == 43
+
+
+async def test_scheduled_pipelines_on_the_dashboard():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(160, 45)) as pilot:
+        await settle(app, pilot)
+        nightly = app.screen.query_one('#nightly', ListView)
+        assert nightly.display
+        [item] = nightly.children
+        labels = [str(label.render()) for label in item.query(Label)]
+        assert labels[0] == 'widgets  nightly on master'
+        assert labels[1].startswith('✗ failed  #40 · ')
+        assert '1 failed' in str(nightly.border_subtitle)
+        nightly.focus()
+        await pilot.press('enter')
+        await settle(app, pilot)
+        assert isinstance(app.screen, PipelineRunScreen)
+        assert app.screen.build_number == 40
+
+
+async def test_running_builds_on_your_prs_are_watched():
+    api = FakeAPI(me='Ada')
+    app = make_app(api)
+    notes = []
+
+    async def statuses(workspace, repo_slug, pr_id):
+        # PR 21's build is running until `run_43_done`; PR 22's has already passed.
+        state = 'SUCCESSFUL' if api.run_43_done or pr_id == 22 else 'INPROGRESS'
+        return [
+            BuildStatus(
+                key='k',
+                name='Pipeline',
+                state=state,
+                url=f'https://bitbucket.org/acme/widgets/pipelines/results/{pr_id + 22}',
+            )
+        ]
+
+    api.pull_request_statuses = statuses
+    async with app.run_test(size=(160, 45)) as pilot:
+        app.notify = lambda message, **kwargs: notes.append(message)
+        await settle(app, pilot)
+        assert 'https://bitbucket.org/acme/widgets/pipelines/results/43' in app.watched_builds
+        app.check_watched_builds()
+        await settle(app, pilot)
+        assert notes == []
+        api.run_43_done = True
+        app.check_watched_builds()
+        await settle(app, pilot)
+        assert notes == ['✔ Build passed: #21 Mine']
+        assert app.watched_builds == {}

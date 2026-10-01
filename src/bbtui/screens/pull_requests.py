@@ -7,6 +7,7 @@ from textual.widgets import DataTable, Footer, Header
 from bbtui.models import PullRequest, Repository
 from bbtui.screens.base import BaseScreen
 from bbtui.screens.create_pull_request import CreatePullRequestScreen
+from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import PullRequestDetailScreen
 from bbtui.text import ago, one_line, truncate
 
@@ -31,6 +32,7 @@ class PullRequestsScreen(BaseScreen):
         Binding('s', 'cycle_state', 'State'),
         Binding('o', 'open_in_browser', 'Open in browser'),
         Binding('n', 'new_pull_request', 'New PR'),
+        Binding('P', 'pipelines', 'Pipelines'),
     ]
 
     def __init__(self, repo: Repository):
@@ -131,3 +133,6 @@ class PullRequestsScreen(BaseScreen):
             )
 
         self.app.push_screen(CreatePullRequestScreen(self.repo), created)
+
+    def action_pipelines(self) -> None:
+        self.app.push_screen(PipelinesScreen(self.repo))

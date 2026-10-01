@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 from rich.text import Text
 from textual import on, work
@@ -21,6 +22,7 @@ from bbtui.merge import Check, merge_checks, verdict
 from bbtui.models import BuildStatus, Comment, DiffStat, PullRequest
 from bbtui.screens.base import BaseScreen
 from bbtui.screens.composer import CommentComposer, CommentTarget
+from bbtui.screens.pipeline_run import PipelineRunScreen
 from bbtui.text import ago, clean, one_line, timestamp
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
 from bbtui.widgets.comments import Thread
@@ -31,6 +33,9 @@ REVIEW_MARKS = {
     'approved': ('✔', 'green'),
     'changes_requested': ('✗', 'red'),
 }
+PIPELINE_URL = re.compile(
+    r'bitbucket\.org/(?P<workspace>[^/]+)/(?P<slug>[^/]+)/pipelines/results/(?P<number>\d+)'
+)
 STATUS_STYLES = {'A': 'green', 'D': 'red', 'R': 'yellow', 'M': 'blue'}
 CHECK_MARKS = {'ok': ('✔', 'green'), 'blocked': ('✗', 'red'), 'pending': ('●', 'yellow')}
 BUILD_MARKS = {
@@ -121,7 +126,7 @@ class PullRequestDetailScreen(BaseScreen):
         Binding('escape', 'app.pop_screen', 'Back'),
         Binding('r', 'refresh', 'Refresh'),
         Binding('o', 'open_in_browser', 'Open in browser'),
-        Binding('p', 'open_build', 'Open build'),
+        Binding('p', 'open_build', 'Build'),
         Binding('a', 'toggle_review("approve")', 'Approve'),
         Binding('x', 'toggle_review("changes")', 'Request changes'),
         Binding('c', 'comment', 'Comment'),
@@ -371,7 +376,7 @@ class PullRequestDetailScreen(BaseScreen):
         for states in (('FAILED', 'STOPPED'), ('INPROGRESS',), None):
             for status in with_urls:
                 if states is None or status.state in states:
-                    self.app.open_url(status.url or '')
+                    self.open_build(status.url or '')
                     return
         self.notify('No builds to open')
 
@@ -478,6 +483,16 @@ class PullRequestDetailScreen(BaseScreen):
         self.drafts.pop(target.key, None)
         self.notify('Comment posted')
         await self.reload_comments()
+
+    def open_build(self, url: str) -> None:
+        """Open a Bitbucket Pipelines run in bbtui; anything else (other CI) in the browser."""
+        if match := PIPELINE_URL.search(url):
+            label = f'#{self.pr_id} {self.pull_request.title}' if self.pull_request else ''
+            self.app.push_screen(
+                PipelineRunScreen(match['workspace'], match['slug'], int(match['number']), label)
+            )
+        else:
+            self.app.open_url(url)
 
     def action_open_in_browser(self) -> None:
         if self.pull_request and self.pull_request.html_url:

@@ -10,6 +10,7 @@ username: you@example.com
 #   read:user:bitbucket, read:workspace:bitbucket, read:repository:bitbucket,
 #   read:pullrequest:bitbucket, read:pipeline:bitbucket
 # and, to approve and comment, write:pullrequest:bitbucket
+# and, to re-run and stop pipelines, write:pipeline:bitbucket
 api_token: ATATT...
 
 # The workspace bbtui opens in.

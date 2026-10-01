@@ -31,6 +31,15 @@ Browsing and the first part of reviewing are in place:
   pre-selected, and the form previews the commits and changed files and warns about an
   already-open pull request from the same branch.
 
+- **Pipelines**: a run screen with the run's summary, its steps, a list of likely failure lines
+  (`[FAIL]`, `error:`, `FAILED`, `make: ***`, tracebacks, ...) and a fast log viewer that keeps
+  colours. A failed run opens on its last likely failure. Running pipelines are polled and their
+  logs tailed. Re-run and stop ask for confirmation. Open a run from a pull request's builds
+  (`p`), from a repository's pipeline list (`P` on its pull requests), or from the dashboard's
+  scheduled pipelines panel, which shows the latest run of each schedule (e.g. a nightly) in
+  your starred repositories. You get a notification when a build on one of your pull requests
+  finishes.
+
 ## Setup
 
 ```sh
@@ -56,6 +65,7 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | Pull requests | `Enter` | Open the pull request |
 | | `s` | Cycle open / merged / declined |
 | | `n` | New pull request |
+| | `P` | The repository's pipelines |
 | | `o` | Open in the browser |
 | | `Esc` | Back |
 | New pull request | `Ctrl+S` | Create |
@@ -68,10 +78,16 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | | `x` | Request changes, or withdraw the request |
 | | `c` | Comment: on the PR (Overview), on the cursor line (diff), or reply to the focused comment |
 | | `Tab` / click | Focus a comment, to reply to it |
-| | `p` | Open the build (failing, else running, else latest) |
+| | `p` | Open the build (failing, else running, else latest) in bbtui |
 | | `o` | Open in the browser |
 | | `r` | Refresh |
 | | `Esc` | Back |
+| Pipelines | `m` / `f` | Only mine / only failed (toggles) |
+| | `Enter` | Open the run |
+| Pipeline run | `e` / `E` | Next / previous likely failure |
+| | `/`, then `n` / `N` | Search the log, next / previous match |
+| | `R` / `s` | Re-run / stop (asks first) |
+| | `Enter` (steps, failures) | Show that step's log / jump to that line |
 | Diff | `↑`/`↓`, `j`/`k`, PgUp/PgDn, `g`/`G` | Move the line cursor |
 | Comment editor | `Ctrl+S` / `Esc` | Post / cancel (keeps the draft) |
 
@@ -83,6 +99,7 @@ src/bbtui/
   config.py         settings from YAML + BBTUI_* environment variables
   models.py         typed views of Bitbucket REST v2 resources
   merge.py          merge readiness checks
+  logs.py           pipeline log decoding, sanitising, failure detection
   git.py            reading the local checkout (default source branch)
   pull_request_defaults.py   default title and description for new pull requests
   diff.py           unified diff parsing (per file, with old/new line numbers)
@@ -112,7 +129,8 @@ stripped, so titles, descriptions and comments can't restyle the UI or move the 
 2. Reviewing: ~~approve, request changes, comment (top-level, inline, replies)~~, edit and delete
    your comments, tasks, merge, decline
 3. ~~Creating pull requests~~ (adding reviewers beyond the defaults, and PRs from forks, to come)
-4. Pipelines: runs per repository, step status, step logs (tailing while running), rerun
+4. ~~Pipelines: runs per repository, step status, step logs (tailing while running), rerun~~;
+   running custom pipelines with variables, test reports
 
 Merge checks report what the API shows to non-admins. The repository's own merge rules (for
 example "2 approvals required") are branch restrictions, which need repository admin access to

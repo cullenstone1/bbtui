@@ -86,6 +86,29 @@ class BitbucketClient:
         raise_for_status(response)
         return response.text
 
+    async def get_bytes(self, path: str, start: int = 0) -> tuple[bytes, int | None]:
+        """Raw bytes from `start` onwards, and the total size if the server says.
+
+        Used to tail pipeline step logs without re-downloading them.
+        """
+        headers = {'Accept': 'application/octet-stream'}
+        if start:
+            headers['Range'] = f'bytes={start}-'
+        response = await self._http.get(path, headers=headers)
+        if response.status_code == 416:  # Nothing past `start` yet.
+            return b'', start
+        raise_for_status(response)
+        total = None
+        if content_range := response.headers.get('content-range'):
+            total_text = content_range.rsplit('/', 1)[-1]
+            total = int(total_text) if total_text.isdigit() else None
+        elif response.status_code == 200:
+            total = len(response.content)
+            if start:
+                # The server ignored the range and sent everything.
+                return response.content[start:], total
+        return response.content, total
+
     async def send(self, method: str, path: str, json: dict[str, Any] | None = None) -> dict | None:
         """A write request (POST, PUT, DELETE). Returns the JSON body, if there is one."""
         response = await self._http.request(method, path, json=json)
