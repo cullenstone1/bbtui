@@ -9,6 +9,7 @@ username: you@example.com
 # Create one at https://id.atlassian.com/manage-profile/security/api-tokens with at least:
 #   read:user:bitbucket, read:workspace:bitbucket, read:repository:bitbucket,
 #   read:pullrequest:bitbucket, read:pipeline:bitbucket
+# and, to approve and comment, write:pullrequest:bitbucket
 api_token: ATATT...
 
 # The workspace bbtui opens in.

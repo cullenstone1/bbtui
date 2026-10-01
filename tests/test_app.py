@@ -1,10 +1,11 @@
-from textual.widgets import DataTable, ListView, Static
+from textual.widgets import DataTable, ListView, Static, TextArea
 
 from bbtui.api import PermissionDeniedError
 from bbtui.app import BBTUI
 from bbtui.config import Settings
-from bbtui.models import BuildStatus, Comment, DiffStat, PullRequest, Repository
+from bbtui.models import BuildStatus, Comment, DiffStat, PullRequest, Repository, User
 from bbtui.screens import DashboardScreen, PullRequestDetailScreen, PullRequestsScreen
+from bbtui.screens.composer import CommentComposer
 from bbtui.screens.pull_request_detail import known_names
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
 from tests.factories import (
@@ -22,8 +23,42 @@ DIFF = (
 
 
 class FakeAPI:
-    def __init__(self):
+    def __init__(self, me: str = 'Bob'):
         self.calls: list[tuple] = []
+        self.me = me
+        self.posted: list[Comment] = []
+
+    async def current_user(self):
+        return User.from_api(user_json(self.me))
+
+    async def approve(self, workspace, repo_slug, pr_id):
+        self.calls.append(('approve', pr_id))
+
+    async def unapprove(self, workspace, repo_slug, pr_id):
+        self.calls.append(('unapprove', pr_id))
+
+    async def request_changes(self, workspace, repo_slug, pr_id):
+        self.calls.append(('request_changes', pr_id))
+
+    async def remove_request_changes(self, workspace, repo_slug, pr_id):
+        self.calls.append(('remove_request_changes', pr_id))
+
+    async def create_comment(self, workspace, repo_slug, pr_id, body, **location):
+        self.calls.append(('comment', body, location))
+        inline = None
+        if location.get('path'):
+            inline = {
+                'path': location['path'],
+                'to': location.get('line_to'),
+                'from': location.get('line_from'),
+            }
+        comment = Comment.from_api(
+            comment_json(
+                100 + len(self.posted), body, parent=location.get('parent_id'), inline=inline
+            )
+        )
+        self.posted.append(comment)
+        return comment
 
     async def aclose(self):
         pass
@@ -65,6 +100,7 @@ class FakeAPI:
             Comment.from_api(
                 comment_json(5, 'outdated', inline={'path': 'a.py', 'to': 99, 'from': None})
             ),
+            *self.posted,
         ]
 
     async def pull_request_statuses(self, workspace, repo_slug, pr_id):
@@ -161,7 +197,7 @@ async def test_diff_shows_one_file_with_inline_threads():
         view = detail.query_one(DiffView)
         kinds = [type(child).__name__ for child in view.children]
         # The outdated comment leads, then lines up to `+new`, its thread, then the rest.
-        assert kinds == ['CommentView', 'Static', 'CommentView', 'CommentView', 'Static']
+        assert kinds == ['CommentView', 'DiffLines', 'CommentView', 'CommentView', 'DiffLines']
         assert [card.comment.id for card in view.query(CommentView)] == [5, 3, 4]
         lines = str(view.children[1].render())
         assert '+new' in lines and 'tail' not in lines
@@ -231,3 +267,129 @@ def test_known_names_cover_author_reviewers_and_commenters():
     assert names['id-ada'] == 'Ada'
     assert names['id-cy'] == 'Cy'
     assert names['id-eve'] == 'Eve'
+
+
+async def open_detail(app, pilot) -> PullRequestDetailScreen:
+    await settle(app, pilot)
+    app.push_screen(PullRequestDetailScreen('acme', 'widgets', 11))
+    await settle(app, pilot)
+    assert isinstance(app.screen, PullRequestDetailScreen)
+    return app.screen
+
+
+async def test_approve_toggles_based_on_your_current_review():
+    # Bob has approved and Cy has requested changes on the fake PR.
+    api = FakeAPI(me='Bob')
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await open_detail(app, pilot)
+        await pilot.press('a')
+        await settle(app, pilot)
+        await pilot.press('x')
+        await settle(app, pilot)
+    assert ('unapprove', 11) in api.calls
+    assert ('request_changes', 11) in api.calls
+
+    api = FakeAPI(me='Cy')
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await open_detail(app, pilot)
+        await pilot.press('a')
+        await settle(app, pilot)
+        await pilot.press('x')
+        await settle(app, pilot)
+    assert ('approve', 11) in api.calls
+    assert ('remove_request_changes', 11) in api.calls
+
+
+async def type_comment(app, pilot, text: str, key: str = 'ctrl+s') -> None:
+    await pilot.press('c')
+    await pilot.pause()
+    assert isinstance(app.screen, CommentComposer)
+    app.screen.query_one(TextArea).insert(text)
+    await pilot.press(key)
+    await settle(app, pilot)
+
+
+async def test_general_comment_from_overview():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        await type_comment(app, pilot, 'Looks good')
+        assert (
+            'comment',
+            'Looks good',
+            {'path': None, 'line_to': None, 'line_from': None, 'parent_id': None},
+        ) in api.calls
+        # The new comment shows up without reloading the page.
+        bodies = [c.comment.body for c in detail.query_one('#general-comments').query(CommentView)]
+        assert 'Looks good' in bodies
+
+
+async def test_inline_comment_on_cursor_line_keeps_the_view():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        await pilot.press('2')
+        await settle(app, pilot)
+        await pilot.press('enter')
+        await pilot.pause()
+        view = detail.query_one(DiffView)
+        assert app.focused is view
+        # The cursor starts on the first code line (` ctx`); down once is `-old`.
+        assert view.cursor_line.text == ' ctx'
+        await pilot.press('down')
+        assert view.cursor_line.text == '-old'
+        await type_comment(app, pilot, 'why remove this?')
+        assert (
+            'comment',
+            'why remove this?',
+            {'path': 'a.py', 'line_to': None, 'line_from': 2, 'parent_id': None},
+        ) in api.calls
+        # Same file, same cursor, and the new thread is rendered.
+        assert view.cursor_line.text == '-old'
+        assert 'why remove this?' in [c.comment.body for c in view.query(CommentView)]
+
+
+async def test_reply_to_focused_comment_and_drafts_survive_cancel():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        card = next(c for c in detail.query(CommentView) if c.comment.id == 1)
+        card.focus()
+        await pilot.pause()
+        await type_comment(app, pilot, 'half a thought', key='escape')
+        assert not [c for c in api.calls if c[0] == 'comment']
+
+        card.focus()
+        await pilot.press('c')
+        await pilot.pause()
+        editor = app.screen.query_one(TextArea)
+        assert editor.text == 'half a thought'
+        editor.insert(', finished')
+        await pilot.press('ctrl+s')
+        await settle(app, pilot)
+        assert (
+            'comment',
+            'half a thought, finished',
+            {'path': None, 'line_to': None, 'line_from': None, 'parent_id': 1},
+        ) in api.calls
+        assert detail.drafts == {}
+
+
+async def test_comment_on_a_hunk_header_is_refused():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        await pilot.press('2')
+        await settle(app, pilot)
+        await pilot.press('enter', 'home')
+        await pilot.pause()
+        assert detail.query_one(DiffView).cursor_line.kind == 'hunk'
+        await pilot.press('c')
+        await pilot.pause()
+        assert app.screen is detail

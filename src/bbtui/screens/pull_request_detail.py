@@ -15,14 +15,17 @@ from textual.widgets import (
     TabPane,
 )
 
-from bbtui.api import BitbucketError
+from bbtui.api import BitbucketError, PermissionDeniedError
 from bbtui.diff import FileDiff, parse_diff
 from bbtui.merge import Check, merge_checks, verdict
 from bbtui.models import BuildStatus, Comment, DiffStat, PullRequest
 from bbtui.screens.base import BaseScreen
+from bbtui.screens.composer import CommentComposer, CommentTarget
 from bbtui.text import ago, clean, one_line, timestamp
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
 from bbtui.widgets.comments import Thread
+
+WRITE_SCOPE_HINT = 'the API token needs the write:pullrequest:bitbucket scope'
 
 REVIEW_MARKS = {
     'approved': ('✔', 'green'),
@@ -119,6 +122,9 @@ class PullRequestDetailScreen(BaseScreen):
         Binding('r', 'refresh', 'Refresh'),
         Binding('o', 'open_in_browser', 'Open in browser'),
         Binding('p', 'open_build', 'Open build'),
+        Binding('a', 'toggle_review("approve")', 'Approve'),
+        Binding('x', 'toggle_review("changes")', 'Request changes'),
+        Binding('c', 'comment', 'Comment'),
         Binding('1', "show_tab('overview')", 'Overview', show=False),
         Binding('2', "show_tab('diff')", 'Diff', show=False),
         Binding('left_square_bracket', 'step_file(-1)', 'Prev file'),
@@ -136,6 +142,8 @@ class PullRequestDetailScreen(BaseScreen):
         self.inline_threads: list[Thread] = []
         self.names: dict[str, str] = {}
         self.statuses: list[BuildStatus] = []
+        self.shown_file: int | None = None
+        self.drafts: dict[tuple, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -192,9 +200,49 @@ class PullRequestDetailScreen(BaseScreen):
             return
         finally:
             tabs.loading = False
-        self.show_checks(pr, diffstat, statuses, open_tasks)
-        self.pull_request = pr
+        self.diffstat = diffstat
+        self.file_diffs = {
+            path: file_diff for file_diff in parse_diff(clean(diff)) for path in file_diff.paths
+        }
         self.names = known_names(pr, comments)
+        await self.show_overview(pr, statuses, open_tasks)
+        await self.show_comments(comments)
+
+    async def reload_overview(self) -> None:
+        """Re-fetch the pull request, builds and tasks (after a review action)."""
+        ws, slug, pr_id = self.workspace, self.repo_slug, self.pr_id
+        try:
+            pr, statuses, open_tasks = await asyncio.gather(
+                self.api.pull_request(ws, slug, pr_id),
+                _optional(self.api.pull_request_statuses(ws, slug, pr_id)),
+                _optional(self.api.pull_request_open_task_count(ws, slug, pr_id)),
+            )
+        except Exception as exc:
+            self.report_error(exc, 'Reloading pull request')
+            return
+        await self.show_overview(pr, statuses, open_tasks)
+
+    async def reload_comments(self) -> None:
+        """Re-fetch comments (after posting one), keeping the diff where it was."""
+        try:
+            comments = await self.api.pull_request_comments(
+                self.workspace, self.repo_slug, self.pr_id
+            )
+        except Exception as exc:
+            self.report_error(exc, 'Reloading comments')
+            return
+        if self.pull_request:
+            self.names = known_names(self.pull_request, comments)
+        await self.show_comments(comments)
+
+    async def show_overview(
+        self,
+        pr: PullRequest,
+        statuses: 'list[BuildStatus] | BitbucketError',
+        open_tasks: 'int | BitbucketError',
+    ) -> None:
+        self.pull_request = pr
+        self.show_checks(pr, self.diffstat, statuses, open_tasks)
         self.query_one('#summary', Static).update(summary_text(pr))
         reviewers = self.query_one('#reviewers', Static)
         reviewers.update(reviewers_text(pr))
@@ -202,14 +250,10 @@ class PullRequestDetailScreen(BaseScreen):
         description = resolve_mentions(clean(pr.description), self.names)
         await self.query_one('#description', Markdown).update(description or '_No description_')
 
+    async def show_comments(self, comments: list[Comment]) -> None:
         threads = comment_threads(comments)
         self.inline_threads = [t for t in threads if t[0][0].is_inline]
         await self.show_general_comments([t for t in threads if not t[0][0].is_inline])
-
-        self.diffstat = diffstat
-        self.file_diffs = {
-            path: file_diff for file_diff in parse_diff(clean(diff)) for path in file_diff.paths
-        }
         self.show_file_chooser()
 
     def show_checks(
@@ -279,7 +323,9 @@ class PullRequestDetailScreen(BaseScreen):
 
     @on(DataTable.RowHighlighted, '#file-chooser')
     def file_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        self.show_file(event.cursor_row)
+        # Rebuilding the chooser re-highlights the current row; don't reset that file's view.
+        if event.cursor_row != self.shown_file:
+            self.show_file(event.cursor_row)
 
     @on(DataTable.RowSelected, '#file-chooser')
     def file_selected(self, event: DataTable.RowSelected) -> None:
@@ -295,8 +341,10 @@ class PullRequestDetailScreen(BaseScreen):
         file_diff = self.file_diffs.get(stat.new_path or '') or self.file_diffs.get(
             stat.old_path or ''
         )
+        same_file = index == self.shown_file
+        self.shown_file = index
         await self.query_one(DiffView).show_file(
-            stat, file_diff, self.threads_for(stat), self.names
+            stat, file_diff, self.threads_for(stat), self.names, keep_position=same_file
         )
 
     def action_step_file(self, step: int) -> None:
@@ -326,6 +374,110 @@ class PullRequestDetailScreen(BaseScreen):
                     self.app.open_url(status.url or '')
                     return
         self.notify('No builds to open')
+
+    # --- reviewing ----------------------------------------------------------------------------
+
+    def report_write_error(self, exc: Exception, action: str) -> None:
+        if isinstance(exc, PermissionDeniedError):
+            exc = PermissionDeniedError(f'{exc} ({WRITE_SCOPE_HINT})', exc.status_code)
+        self.report_error(exc, action)
+
+    def action_toggle_review(self, kind: str) -> None:
+        self.toggle_review(kind)
+
+    @work(exclusive=True, group='review', exit_on_error=False)
+    async def toggle_review(self, kind: str) -> None:
+        """Approve / unapprove, or request changes / withdraw the request."""
+        pr = self.pull_request
+        if pr is None:
+            return
+        ws, slug, pr_id = self.workspace, self.repo_slug, self.pr_id
+        try:
+            me = await self.bbtui.current_user()
+            mine = next((p for p in pr.participants if p.user.account_id == me.account_id), None)
+            if kind == 'approve':
+                if mine and mine.approved:
+                    await self.api.unapprove(ws, slug, pr_id)
+                    message = 'Approval removed'
+                else:
+                    await self.api.approve(ws, slug, pr_id)
+                    message = 'Approved'
+            elif mine and mine.state == 'changes_requested':
+                await self.api.remove_request_changes(ws, slug, pr_id)
+                message = 'Change request withdrawn'
+            else:
+                await self.api.request_changes(ws, slug, pr_id)
+                message = 'Changes requested'
+        except Exception as exc:
+            self.report_write_error(exc, 'Updating your review')
+            return
+        self.notify(message)
+        await self.reload_overview()
+
+    def comment_target(self) -> CommentTarget | str:
+        """What `c` comments on, from the focus: a reply to the focused comment, an inline
+        comment on the diff cursor line, or a general comment. A string explains why not."""
+        focused = self.focused
+        if isinstance(focused, CommentView):
+            parent = focused.comment
+            if parent.deleted:
+                return "Can't reply to a deleted comment"
+            author = one_line(parent.author.display_name)
+            quote = '\n'.join(clean(parent.body).strip().split('\n')[:4])
+            return CommentTarget(f'Reply to {author}', quote, parent_id=parent.id)
+        if isinstance(focused, DiffView):
+            line = focused.line_target()
+            if line is None:
+                return 'Move the cursor to a code line to comment on it'
+            return CommentTarget(
+                f'Comment on {one_line(line.path)}:{line.number}',
+                line.text,
+                path=line.path,
+                line_to=line.line_to,
+                line_from=line.line_from,
+            )
+        if self.query_one(TabbedContent).active == 'overview':
+            return CommentTarget(f'Comment on #{self.pr_id}')
+        return 'Press Enter to move into the diff and pick a line to comment on'
+
+    def action_comment(self) -> None:
+        target = self.comment_target()
+        if isinstance(target, str):
+            self.notify(target)
+            return
+
+        def finished(result: tuple[str, str] | None) -> None:
+            action, text = result or ('cancel', '')
+            if action == 'post':
+                self.post_comment(target, text)
+            elif text.strip():
+                self.drafts[target.key] = text
+                self.notify('Draft kept; press c on the same spot to continue it')
+            else:
+                self.drafts.pop(target.key, None)
+
+        self.app.push_screen(CommentComposer(target, self.drafts.get(target.key, '')), finished)
+
+    @work(group='post', exit_on_error=False)
+    async def post_comment(self, target: CommentTarget, text: str) -> None:
+        try:
+            await self.api.create_comment(
+                self.workspace,
+                self.repo_slug,
+                self.pr_id,
+                text,
+                path=target.path,
+                line_to=target.line_to,
+                line_from=target.line_from,
+                parent_id=target.parent_id,
+            )
+        except Exception as exc:
+            self.drafts[target.key] = text
+            self.report_write_error(exc, 'Posting comment (kept as a draft)')
+            return
+        self.drafts.pop(target.key, None)
+        self.notify('Comment posted')
+        await self.reload_comments()
 
     def action_open_in_browser(self) -> None:
         if self.pull_request and self.pull_request.html_url:

@@ -86,6 +86,14 @@ class BitbucketClient:
         raise_for_status(response)
         return response.text
 
+    async def send(self, method: str, path: str, json: dict[str, Any] | None = None) -> dict | None:
+        """A write request (POST, PUT, DELETE). Returns the JSON body, if there is one."""
+        response = await self._http.request(method, path, json=json)
+        raise_for_status(response)
+        if not response.content or 'json' not in response.headers.get('content-type', ''):
+            return None
+        return response.json()
+
     async def get_all(
         self, path: str, params: dict[str, Any] | None = None, limit: int | None = None
     ) -> list[dict]:

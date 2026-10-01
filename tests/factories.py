@@ -56,7 +56,7 @@ def comment_json(comment_id: int, body: str, parent: int | None = None, **overri
         'id': comment_id,
         'content': {'raw': body},
         'user': user_json('Bob'),
-        'created_on': f'2026-09-30T10:{comment_id:02d}:00.000000+00:00',
+        'created_on': f'2026-09-30T{10 + comment_id // 60:02d}:{comment_id % 60:02d}:00+00:00',
         'deleted': False,
     }
     if parent is not None:

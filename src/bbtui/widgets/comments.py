@@ -40,7 +40,12 @@ def comment_threads(comments: list[Comment]) -> list[Thread]:
 
 
 class CommentView(Markdown):
-    """One comment, rendered as Markdown in a titled border, indented by reply depth."""
+    """One comment, rendered as Markdown in a titled border, indented by reply depth.
+
+    Focusable, so the pull request screen can reply to the focused comment.
+    """
+
+    can_focus = True
 
     def __init__(
         self, comment: Comment, depth: int, names: dict[str, str], show_location: bool = True

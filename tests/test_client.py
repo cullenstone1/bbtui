@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -133,3 +135,44 @@ async def test_statuses_and_open_tasks():
     statuses = await api.pull_request_statuses('acme', 'widgets', 1)
     assert [(s.name, s.state) for s in statuses] == [('Pipeline', 'SUCCESSFUL')]
     assert await api.pull_request_open_task_count('acme', 'widgets', 1) == 1
+
+
+async def test_review_actions_hit_the_right_endpoints():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path.removeprefix('/2.0/repositories/acme/w')))
+        return httpx.Response(200 if request.method == 'POST' else 204)
+
+    api = make_api(handler)
+    await api.approve('acme', 'w', 5)
+    await api.unapprove('acme', 'w', 5)
+    await api.request_changes('acme', 'w', 5)
+    await api.remove_request_changes('acme', 'w', 5)
+    assert seen == [
+        ('POST', '/pullrequests/5/approve'),
+        ('DELETE', '/pullrequests/5/approve'),
+        ('POST', '/pullrequests/5/request-changes'),
+        ('DELETE', '/pullrequests/5/request-changes'),
+    ]
+
+
+async def test_comment_payloads():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(201, json={'id': 7, 'content': {'raw': 'x'}})
+
+    api = make_api(handler)
+    comment = await api.create_comment('acme', 'w', 5, 'general')
+    await api.create_comment('acme', 'w', 5, 'on new line', path='a.py', line_to=12)
+    await api.create_comment('acme', 'w', 5, 'on removed line', path='a.py', line_from=3)
+    await api.create_comment('acme', 'w', 5, 'reply', path='a.py', line_to=12, parent_id=9)
+    assert comment.id == 7
+    assert bodies == [
+        {'content': {'raw': 'general'}},
+        {'content': {'raw': 'on new line'}, 'inline': {'path': 'a.py', 'to': 12}},
+        {'content': {'raw': 'on removed line'}, 'inline': {'path': 'a.py', 'from': 3}},
+        {'content': {'raw': 'reply'}, 'parent': {'id': 9}},
+    ]

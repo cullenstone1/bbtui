@@ -6,7 +6,7 @@ review, pull request creation and pipeline monitoring without leaving the termin
 
 ## Status
 
-Milestone 1 (read-only browsing) is in place:
+Browsing and the first part of reviewing are in place:
 
 - **Dashboard**: starred repositories from the config, recently updated repositories, and
   server-side search by repository name.
@@ -17,6 +17,10 @@ Milestone 1 (read-only browsing) is in place:
   threads appear under the lines they refer to; comments on lines no longer in the diff are shown
   at the top of the file. Descriptions and comments are rendered as Markdown, with @-mentions
   shown as names.
+
+- **Reviewing**: approve or request changes (each key toggles), and comment with a Markdown
+  editor: on the pull request, inline on a diff line, or as a reply to a comment. A cancelled or
+  failed comment is kept as a draft for the same spot.
 
 ## Setup
 
@@ -46,10 +50,16 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | Pull request | `1` / `2` | Overview / Diff |
 | | `[` / `]` | Previous / next file |
 | | `Enter` (file list) | Move into the diff; `Esc` goes back to the file list |
+| | `a` | Approve, or remove your approval |
+| | `x` | Request changes, or withdraw the request |
+| | `c` | Comment: on the PR (Overview), on the cursor line (diff), or reply to the focused comment |
+| | `Tab` / click | Focus a comment, to reply to it |
 | | `p` | Open the build (failing, else running, else latest) |
 | | `o` | Open in the browser |
 | | `r` | Refresh |
 | | `Esc` | Back |
+| Diff | `↑`/`↓`, `j`/`k`, PgUp/PgDn, `g`/`G` | Move the line cursor |
+| Comment editor | `Ctrl+S` / `Esc` | Post / cancel (keeps the draft) |
 
 ## Layout
 
@@ -83,7 +93,8 @@ stripped, so titles, descriptions and comments can't restyle the UI or move the 
 ## Roadmap
 
 1. ~~Read-only browsing~~
-2. Reviewing: approve, request changes, comment (top-level, inline, replies), merge, decline
+2. Reviewing: ~~approve, request changes, comment (top-level, inline, replies)~~, edit and delete
+   your comments, tasks, merge, decline
 3. Creating pull requests: branch pickers, title/description, reviewers
 4. Pipelines: runs per repository, step status, step logs (tailing while running), rerun
 

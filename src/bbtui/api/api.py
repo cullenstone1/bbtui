@@ -160,3 +160,52 @@ class BitbucketAPI:
             limit=1000,
         )
         return sum(1 for v in values if v.get('state') == 'UNRESOLVED')
+
+    # --- reviewing --------------------------------------------------------------------------------
+
+    def _pr_path(self, workspace: str, repo_slug: str, pr_id: int) -> str:
+        return f'/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}'
+
+    async def approve(self, workspace: str, repo_slug: str, pr_id: int) -> None:
+        await self.client.send('POST', f'{self._pr_path(workspace, repo_slug, pr_id)}/approve')
+
+    async def unapprove(self, workspace: str, repo_slug: str, pr_id: int) -> None:
+        await self.client.send('DELETE', f'{self._pr_path(workspace, repo_slug, pr_id)}/approve')
+
+    async def request_changes(self, workspace: str, repo_slug: str, pr_id: int) -> None:
+        path = f'{self._pr_path(workspace, repo_slug, pr_id)}/request-changes'
+        await self.client.send('POST', path)
+
+    async def remove_request_changes(self, workspace: str, repo_slug: str, pr_id: int) -> None:
+        path = f'{self._pr_path(workspace, repo_slug, pr_id)}/request-changes'
+        await self.client.send('DELETE', path)
+
+    async def create_comment(
+        self,
+        workspace: str,
+        repo_slug: str,
+        pr_id: int,
+        body: str,
+        *,
+        path: str | None = None,
+        line_to: int | None = None,
+        line_from: int | None = None,
+        parent_id: int | None = None,
+    ) -> Comment:
+        """Post a comment: general, inline (`path` plus `line_to` for new/context lines or
+        `line_from` for removed lines), or a reply (`parent_id`; replies inherit the parent's
+        location)."""
+        payload: dict = {'content': {'raw': body}}
+        if parent_id is not None:
+            payload['parent'] = {'id': parent_id}
+        elif path is not None:
+            inline: dict = {'path': path}
+            if line_to is not None:
+                inline['to'] = line_to
+            elif line_from is not None:
+                inline['from'] = line_from
+            payload['inline'] = inline
+        data = await self.client.send(
+            'POST', f'{self._pr_path(workspace, repo_slug, pr_id)}/comments', payload
+        )
+        return Comment.from_api(data or {'id': 0})

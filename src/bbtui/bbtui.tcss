@@ -135,3 +135,41 @@ TabPane {
     text-align: right;
     color: $text-muted;
 }
+
+/* Comment cards are focusable (Tab or click) so `c` can reply to them. */
+.comment:focus {
+    border: round $accent;
+    border-title-color: $accent;
+}
+
+CommentComposer {
+    align: center middle;
+    background: $background 60%;
+}
+
+#composer {
+    width: 90%;
+    max-width: 110;
+    height: auto;
+    max-height: 80%;
+    border: round $accent;
+    border-title-color: $accent;
+    background: $surface;
+    padding: 0 1;
+}
+
+#composer-quote {
+    max-height: 6;
+    margin-bottom: 1;
+    border-left: thick $primary-lighten-3;
+    padding-left: 1;
+}
+
+#composer-text {
+    height: 12;
+    border: none;
+}
+
+#composer-hint {
+    margin-top: 1;
+}
