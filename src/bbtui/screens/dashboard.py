@@ -2,29 +2,31 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, Input, Label, ListItem, ListView
 
 from bbtui.api.api import split_repo_name
 from bbtui.models import Repository
 from bbtui.screens.base import BaseScreen
 from bbtui.screens.pull_requests import PullRequestsScreen
-from bbtui.text import ago, one_line
-
-
-def repository_text(repo: Repository) -> Text:
-    text = Text(one_line(repo.full_name), style='bold')
-    if repo.updated_on:
-        text.append(f'  {ago(repo.updated_on)}', style='italic')
-    if description := one_line(repo.description):
-        text.append(f'  {description}', style='dim')
-    return text
+from bbtui.text import one_line, relative
 
 
 class RepositoryItem(ListItem):
-    def __init__(self, repo: Repository):
-        super().__init__(Label(repository_text(repo)))
+    """A repository as one row: name, description, and when it was last updated."""
+
+    def __init__(self, repo: Repository, current_workspace: str):
+        super().__init__()
         self.repo = repo
+        self.current_workspace = current_workspace
+
+    def compose(self) -> ComposeResult:
+        repo = self.repo
+        name = repo.slug if repo.workspace == self.current_workspace else repo.full_name
+        with Horizontal(classes='repo-row'):
+            yield Label(Text(one_line(name)), classes='repo-name')
+            yield Label(Text(one_line(repo.description)), classes='repo-description')
+            yield Label(Text(relative(repo.updated_on)), classes='repo-updated')
 
 
 class DashboardScreen(BaseScreen):
@@ -67,7 +69,7 @@ class DashboardScreen(BaseScreen):
         finally:
             starred.loading = False
         await starred.clear()
-        await starred.extend(RepositoryItem(repo) for repo in repos)
+        await starred.extend(RepositoryItem(repo, self.settings.workspace or '') for repo in repos)
         starred.index = 0
         starred.border_subtitle = str(len(repos))
         if missing:
@@ -104,7 +106,9 @@ class DashboardScreen(BaseScreen):
         await others.clear()
         others.border_subtitle = str(len(repos))
         if repos:
-            await others.extend(RepositoryItem(repo) for repo in repos)
+            await others.extend(
+                RepositoryItem(repo, self.settings.workspace or '') for repo in repos
+            )
             others.index = 0
         else:
             await others.append(ListItem(Label(Text('No repositories found', 'dim'))))

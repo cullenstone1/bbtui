@@ -47,6 +47,28 @@ def ago(when: datetime | None, now: datetime | None = None) -> str:
     return 'now'
 
 
+def relative(when: datetime | None, now: datetime | None = None) -> str:
+    """A spelled-out relative time like `just now`, `18 min ago` or `3 days ago`."""
+    if when is None:
+        return ''
+    now = now or datetime.now(when.tzinfo)
+    seconds = max(0, int((now - when).total_seconds()))
+    units = (
+        ('year', 31_536_000),
+        ('month', 2_592_000),
+        ('week', 604_800),
+        ('day', 86_400),
+        ('hour', 3_600),
+        ('min', 60),
+    )
+    for unit, size in units:
+        if seconds >= size:
+            count = seconds // size
+            plural = 's' if count != 1 and unit != 'min' else ''
+            return f'{count} {unit}{plural} ago'
+    return 'just now'
+
+
 def timestamp(when: datetime | None) -> str:
     """A local `YYYY-MM-DD HH:MM` timestamp."""
     return when.astimezone().strftime('%Y-%m-%d %H:%M') if when else ''

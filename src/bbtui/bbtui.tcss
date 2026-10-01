@@ -108,3 +108,30 @@ TabPane {
 #description > MarkdownBlock:last-child {
     margin-bottom: 0;
 }
+
+/* Dashboard repository rows: name | description | updated, aligned in columns. */
+.repo-row {
+    height: 1;
+    padding: 0 1;
+}
+
+.repo-name {
+    width: 32;
+    text-style: bold;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.repo-description {
+    width: 1fr;
+    padding: 0 2;
+    color: $text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.repo-updated {
+    width: 14;
+    text-align: right;
+    color: $text-muted;
+}
