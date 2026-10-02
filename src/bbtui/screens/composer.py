@@ -39,6 +39,10 @@ class CommentComposer(ModalScreen[tuple[str, str]]):
         self.target = target
         self.draft = draft
 
+    def is_editing(self) -> bool:
+        """Always: the idle timeout must not throw away a comment being written."""
+        return True
+
     def compose(self) -> ComposeResult:
         with Vertical(id='composer'):
             if self.target.quote:

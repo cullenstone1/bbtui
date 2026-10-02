@@ -266,14 +266,17 @@ class CreatePullRequestScreen(BaseScreen):
         self.notify(f'Created #{pr.id}', markup=False)
         self.dismiss(pr)
 
-    def action_cancel(self) -> None:
+    def is_editing(self) -> bool:
+        """Whether you've changed the title or description from the defaults."""
         title = self.query_one('#create-title', Input).value
         description = self.query_one('#create-description', TextArea).text
-        edited = title not in ('', self.auto_title) or description not in (
+        return title not in ('', self.auto_title) or description not in (
             '',
             self.auto_description,
         )
-        if edited and not self.confirm_cancel:
+
+    def action_cancel(self) -> None:
+        if self.is_editing() and not self.confirm_cancel:
             self.confirm_cancel = True
             self.notify('You have edits; press Esc again to discard them')
             return

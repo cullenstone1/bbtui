@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     suits the app theme."""
     theme: str = 'textual-dark'
     """The name of a Textual theme."""
+    idle_timeout_minutes: float = 0
+    """Go back to the dashboard after this many minutes without a key press, click or scroll
+    (0 turns it off). Never while you're writing a comment or a pull request."""
     base_url: str = DEFAULT_BASE_URL
 
     @classmethod

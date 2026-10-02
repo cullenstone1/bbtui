@@ -1,4 +1,5 @@
 import sys
+import time
 
 from textual.widgets import (
     Button,
@@ -745,6 +746,12 @@ async def test_create_keeps_your_edits_and_confirms_discarding_them():
         assert form.query_one('#create-title', Input).value == 'My own title'
         assert form.query_one('#create-description', TextArea).text == '* ABC-8-old-thing work'
 
+        # Your edits also hold off the idle timeout.
+        app.settings.idle_timeout_minutes = 1
+        app.last_interaction = time.monotonic() - 3600
+        await app.check_idle_timeout()
+        assert app.screen is form
+
         form.query_one('#create-description', TextArea).focus()
         await pilot.press('escape')
         await pilot.pause()
@@ -1154,3 +1161,60 @@ async def test_vim_keys():
         await pilot.press('k', 'k', 'enter')
         await pilot.pause()
         assert dialog.strategy == 'merge_commit'
+
+
+async def test_idle_timeout_returns_to_the_dashboard_unless_editing():
+    api = FakeAPI()
+    app = make_app(api)
+    app.settings.idle_timeout_minutes = 5
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+
+        async def idle(minutes: float) -> None:
+            app.last_interaction = time.monotonic() - minutes * 60
+            await app.check_idle_timeout()
+            await pilot.pause()
+
+        await idle(4)
+        assert app.screen is detail  # Not idle long enough.
+        # A key press counts as use.
+        app.last_interaction = time.monotonic() - 3600
+        await pilot.press('u')
+        await pilot.pause()
+        assert time.monotonic() - app.last_interaction < 5
+        await app.check_idle_timeout()
+        assert isinstance(app.screen, UrlScreen)
+
+        # Writing a comment, or holding an unposted draft, blocks the timeout.
+        await pilot.press('escape', 'c')
+        await pilot.pause()
+        assert isinstance(app.screen, CommentComposer)
+        app.screen.query_one(TextArea).insert('half done')
+        await idle(60)
+        assert isinstance(app.screen, CommentComposer)
+        await pilot.press('escape')
+        await pilot.pause()
+        assert detail.drafts
+        await idle(60)
+        assert app.screen is detail
+
+        # Otherwise everything above the dashboard closes, modals included.
+        detail.drafts.clear()
+        await pilot.press('u')
+        await pilot.pause()
+        await idle(6)
+        assert isinstance(app.screen, DashboardScreen)
+        assert len(app.screen_stack) == 2
+        await idle(60)  # Already on the dashboard: nothing to do.
+        assert isinstance(app.screen, DashboardScreen)
+
+
+async def test_idle_timeout_is_off_by_default():
+    app = make_app(FakeAPI())
+    assert app.settings.idle_timeout_minutes == 0
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        app.last_interaction = time.monotonic() - 10_000
+        await app.check_idle_timeout()
+        await pilot.pause()
+        assert app.screen is detail

@@ -414,6 +414,10 @@ class PullRequestDetailScreen(BaseScreen):
     def action_refresh(self) -> None:
         self.load_pull_request()
 
+    def is_editing(self) -> bool:
+        """Whether there are unposted comment drafts, which leaving the screen would lose."""
+        return bool(self.drafts)
+
     def action_open_build(self) -> None:
         """Open the most relevant build: a failing one, else a running one, else the latest."""
         with_urls = [s for s in self.statuses if s.url]

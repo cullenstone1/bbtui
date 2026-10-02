@@ -34,3 +34,8 @@ close_source_branch: false
 
 # A Textual theme, e.g. textual-dark, nord, gruvbox, tokyo-night.
 theme: textual-dark
+
+# Go back to the dashboard after this many minutes without a key press, click or scroll.
+# It never does while you're writing a comment, have an unposted comment draft, or have edited a
+# new pull request's title or description. 0 (the default) turns it off.
+# idle_timeout_minutes: 15

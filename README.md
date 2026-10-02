@@ -45,6 +45,10 @@ Browsing and the first part of reviewing are in place:
   your starred repositories. You get a notification when a build on one of your pull requests
   finishes.
 
+- **Idle timeout** (optional): with `idle_timeout_minutes` set, bbtui goes back to the dashboard
+  after that many minutes without a key press, click or scroll, but never while you're writing a
+  comment, have an unposted comment draft, or have edited a new pull request.
+
 ## Setup
 
 ```sh

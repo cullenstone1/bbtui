@@ -1,6 +1,7 @@
 import os
+import time
 
-from textual import work
+from textual import events, work
 from textual.app import App
 from textual.binding import Binding
 
@@ -11,6 +12,15 @@ from bbtui.screens import DashboardScreen
 from bbtui.watch import WatchedBuild
 
 WATCH_SECONDS = 30
+IDLE_CHECK_SECONDS = 15
+INTERACTIONS = (
+    events.Key,
+    events.MouseDown,
+    events.MouseScrollDown,
+    events.MouseScrollUp,
+    events.Paste,
+)
+"""Input that counts as using the app, for the idle timeout (mouse movement alone doesn't)."""
 FAILED_STATES = ('FAILED', 'STOPPED', 'ERROR')
 
 
@@ -28,6 +38,7 @@ class BBTUI(App):
         self._current_user: User | None = None
         self.watched_builds: dict[str, WatchedBuild] = {}
         """Running builds by URL; checked every WATCH_SECONDS."""
+        self.last_interaction = time.monotonic()
 
     async def current_user(self) -> User:
         """The authenticated user, fetched once."""
@@ -58,6 +69,30 @@ class BBTUI(App):
                 markup=False,
             )
         self.set_interval(WATCH_SECONDS, self.check_watched_builds)
+        if self.settings.idle_timeout_minutes > 0:
+            self.set_interval(IDLE_CHECK_SECONDS, self.check_idle_timeout)
+
+    async def on_event(self, event: events.Event) -> None:
+        if isinstance(event, INTERACTIONS):
+            self.last_interaction = time.monotonic()
+        await super().on_event(event)
+
+    def is_editing(self) -> bool:
+        """Whether any open screen holds unsaved writing (a comment, a draft, a new PR)."""
+        return any(getattr(screen, 'is_editing', lambda: False)() for screen in self.screen_stack)
+
+    async def check_idle_timeout(self) -> None:
+        """After `idle_timeout_minutes` without input, close everything above the dashboard."""
+        minutes = self.settings.idle_timeout_minutes
+        if minutes <= 0 or time.monotonic() - self.last_interaction < minutes * 60:
+            return
+        dashboard = next((s for s in self.screen_stack if isinstance(s, DashboardScreen)), None)
+        if dashboard is None or self.screen is dashboard or self.is_editing():
+            return
+        while self.screen is not dashboard:
+            await self.pop_screen()
+        self.last_interaction = time.monotonic()
+        self.notify(f'Back to the dashboard after {minutes:g} min idle')
 
     def watch_build(self, url: str, build: WatchedBuild) -> None:
         self.watched_builds[url] = build
