@@ -75,7 +75,6 @@ class PipelineRunScreen(BaseScreen):
         Binding('R', 'rerun', 'Re-run'),
         Binding('s', 'stop', 'Stop'),
         Binding('slash', 'search', 'Search log'),
-        Binding('o', 'open_in_browser', 'Open in browser'),
         Binding('u', 'show_url', 'URL'),
     ]
 
@@ -283,9 +282,6 @@ class PipelineRunScreen(BaseScreen):
 
     def action_refresh(self) -> None:
         self.load_run()
-
-    def action_open_in_browser(self) -> None:
-        self.app.open_url(self.url)
 
     def action_show_url(self) -> None:
         self.app.push_screen(UrlScreen(f'Pipeline #{self.build_number}', self.url))

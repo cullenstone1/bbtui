@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import time
 
 from bbtui.api.client import BitbucketClient, BitbucketError, NotFoundError
+from bbtui.history import Event, pull_request_history
 from bbtui.models import (
     Branch,
     BuildStatus,
@@ -22,6 +23,8 @@ from bbtui.models import (
 
 MAX_PAGELEN = 100
 """The largest `pagelen` most Bitbucket collections accept."""
+
+COMMENT_FIELDS = '+values.inline.*,+values.resolution.*'
 
 
 def _bbql_string(value: str) -> str:
@@ -160,10 +163,21 @@ class BitbucketAPI:
     ) -> list[Comment]:
         values = await self.client.get_all(
             f'/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}/comments',
-            {'pagelen': MAX_PAGELEN},
+            # Outdated flags, code context and who resolved a thread are only sent when asked for.
+            {'pagelen': MAX_PAGELEN, 'fields': COMMENT_FIELDS},
             limit=limit,
         )
         return [Comment.from_api(v) for v in values]
+
+    async def pull_request_history(
+        self, workspace: str, repo_slug: str, pr_id: int, limit: int = 1000
+    ) -> list[Event]:
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}/activity',
+            {'pagelen': 50},
+            limit=limit,
+        )
+        return pull_request_history(values)
 
     async def pull_request_statuses(
         self, workspace: str, repo_slug: str, pr_id: int

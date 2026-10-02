@@ -145,6 +145,7 @@ class DashboardScreen(BaseScreen):
         self.query_one('#starred', ListView).border_title = 'Starred'
         self.query_one('#others', ListView).border_title = 'Recently updated'
         self.query_one('#mine', ListView).border_title = 'My pull requests'
+        self.last_focused: dict[tuple[str, ...], ListView] = {}
         self.query_one('#nightly', ListView).border_title = 'Scheduled pipelines'
         self.query_one('#nightly', ListView).display = False
         self.load_dashboard()
@@ -325,6 +326,35 @@ class DashboardScreen(BaseScreen):
         elif isinstance(event.item, PullRequestItem):
             workspace, slug = event.item.pr.repository.split('/', 1)
             self.app.push_screen(PullRequestDetailScreen(workspace, slug, event.item.pr.id))
+
+    LEFT_LISTS = ('starred', 'others')
+    RIGHT_LISTS = ('nightly', 'mine')
+
+    async def action_vim(self, direction: str) -> None:
+        focused = self.focused
+        if direction in ('left', 'right') and isinstance(focused, ListView) and focused.id:
+            if focused.id in self.LEFT_LISTS and direction == 'right':
+                self.focus_column(self.RIGHT_LISTS)
+                return
+            if focused.id in self.RIGHT_LISTS and direction == 'left':
+                self.focus_column(self.LEFT_LISTS)
+                return
+        await super().action_vim(direction)
+
+    def focus_column(self, ids: tuple[str, ...]) -> None:
+        """Focus the list in that column you were last in, else its first visible one."""
+        lists = [self.query_one(f'#{list_id}', ListView) for list_id in ids]
+        visible = [view for view in lists if view.display]
+        last = self.last_focused.get(ids)
+        target = last if last in visible else (visible[0] if visible else None)
+        if target:
+            target.focus()
+
+    def on_descendant_focus(self, event) -> None:
+        widget = event.widget
+        for column in (self.LEFT_LISTS, self.RIGHT_LISTS):
+            if isinstance(widget, ListView) and widget.id in column:
+                self.last_focused[column] = widget
 
     def action_show_url(self) -> None:
         """The URL of the highlighted pull request, scheduled run or repository."""

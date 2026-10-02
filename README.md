@@ -13,11 +13,12 @@ Browsing and the first part of reviewing are in place:
   their approvals, comments and build status.
 - **Pull requests**: open, merged or declined pull requests for a repository, with review status.
 - **Pull request detail**: an overview with merge checks (draft, conflicts, approvals and
-  changes requested, builds, open tasks), build statuses (`p` opens the pipeline), reviewers, the rendered description and general
-  comments, and a diff tab with a file chooser on top and one file's diff below, syntax
+  changes requested, builds, open tasks), build statuses (`p` opens the pipeline), reviewers, the rendered description, the
+  history (opened, pushes, reviewers, ready, approvals, merge) and general comments, and a diff tab with a file chooser on top and one file's diff below, syntax
   highlighted by file type with added/removed lines tinted. Inline comment
-  threads appear under the lines they refer to; comments on lines no longer in the diff are shown
-  at the top of the file. Descriptions and comments are rendered as Markdown, with @-mentions
+  threads appear under the lines they refer to; outdated comments (their line has changed since)
+  are labelled and shown at the top of the file with the code they were made on. Resolved threads
+  start collapsed to their first line, as on the web. Descriptions and comments are rendered as Markdown, with @-mentions
   shown as names.
 
 - **Reviewing**: approve or request changes (each key toggles), and comment with a Markdown
@@ -62,6 +63,7 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | Screen | Key | Action |
 | --- | --- | --- |
 | Everywhere | `q` | Quit |
+| | `h` `j` `k` `l` | Move or scroll the focused panel (not while typing); on the dashboard `h` / `l` switch columns |
 | | `u` | Show the URL of the pull request, run or repository (`y` copies, `o` opens) |
 | Dashboard | `/` | Search repositories (Enter to run, Esc to clear) |
 | | `Enter` | Open the repository's pull requests, or your pull request |
@@ -71,7 +73,6 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | | `s` | Cycle open / merged / declined |
 | | `n` | New pull request |
 | | `P` | The repository's pipelines |
-| | `o` | Open in the browser |
 | | `Esc` | Back |
 | New pull request | `Ctrl+S` | Create |
 | | `↓` (in a branch filter) | Move into the branch list |
@@ -85,11 +86,12 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | | `m` | Merge (not drafts) |
 | | `c` | Comment: on the PR (Overview), on the cursor line (diff), or reply to the focused comment |
 | | `Tab` / click | Focus a comment, to reply to it |
+| | `Enter` | On a resolved thread's first comment: expand / collapse it |
 | | `p` | Open the build (failing, else running, else latest) in bbtui |
-| | `o` | Open in the browser |
 | | `r` | Refresh |
 | | `Esc` | Back |
 | Pipelines | `m` / `f` | Only mine / only failed (toggles) |
+| | `u` | The highlighted run's URL |
 | | `Enter` | Open the run |
 | Pipeline run | `e` / `E` | Next / previous likely failure |
 | | `/`, then `n` / `N` | Search the log, next / previous match |
@@ -107,6 +109,7 @@ src/bbtui/
   config.py         settings from YAML + BBTUI_* environment variables
   models.py         typed views of Bitbucket REST v2 resources
   merge.py          merge readiness checks
+  history.py        pull request history from the activity feed
   logs.py           pipeline log decoding, sanitising, failure detection
   highlight.py      syntax highlighting for diffs (per hunk, old and new sides)
   git.py            reading the local checkout (default source branch)

@@ -27,6 +27,8 @@ class LogView(ScrollView, can_focus=True):
         Binding('G,end', 'bottom', 'Bottom', show=False),
         Binding('j', 'scroll_down', show=False),
         Binding('k', 'scroll_up', show=False),
+        Binding('h', 'scroll_left', show=False),
+        Binding('l', 'scroll_right', show=False),
     ]
 
     def __init__(self, **kwargs):

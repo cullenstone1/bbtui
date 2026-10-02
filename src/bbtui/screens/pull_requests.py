@@ -31,7 +31,6 @@ class PullRequestsScreen(BaseScreen):
         Binding('escape', 'app.pop_screen', 'Back'),
         Binding('r', 'refresh', 'Refresh'),
         Binding('s', 'cycle_state', 'State'),
-        Binding('o', 'open_in_browser', 'Open in browser'),
         Binding('u', 'show_url', 'URL'),
         Binding('n', 'new_pull_request', 'New PR'),
         Binding('P', 'pipelines', 'Pipelines'),
@@ -116,12 +115,6 @@ class PullRequestsScreen(BaseScreen):
     def action_cycle_state(self) -> None:
         self.state = STATES[(STATES.index(self.state) + 1) % len(STATES)]
         self.load_pull_requests()
-
-    def action_open_in_browser(self) -> None:
-        pr = self.selected_pull_request()
-        url = pr.url if pr else self.repo.html_url
-        if url:
-            self.app.open_url(url)
 
     def action_show_url(self) -> None:
         pr = self.selected_pull_request()

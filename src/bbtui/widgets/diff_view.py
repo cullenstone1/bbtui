@@ -13,7 +13,7 @@ from bbtui.diff import DiffLine, FileDiff
 from bbtui.highlight import DEFAULT_THEMES, highlight_diff
 from bbtui.models import DiffStat
 from bbtui.text import one_line
-from bbtui.widgets.comments import CommentView, Thread
+from bbtui.widgets.comments import Thread, thread_views
 
 MAX_FILE_LINES = 5_000
 
@@ -139,6 +139,8 @@ class DiffView(ScrollableContainer):
         Binding('escape', 'leave', 'Files'),
         Binding('up,k', 'cursor(-1)', 'Up', show=False),
         Binding('down,j', 'cursor(1)', 'Down', show=False),
+        Binding('h', 'scroll_left', 'Left', show=False),
+        Binding('l', 'scroll_right', 'Right', show=False),
         Binding('pageup', 'page(-1)', 'Page up', show=False),
         Binding('pagedown', 'page(1)', 'Page down', show=False),
         Binding('home,g', 'jump(0)', 'Top', show=False),
@@ -216,13 +218,13 @@ class DiffView(ScrollableContainer):
         self.cursor = None
         widgets: list[Widget] = []
 
-        def add_thread(thread: Thread) -> None:
-            widgets.extend(CommentView(c, depth, names, show_location=False) for c, depth in thread)
+        def add_thread(thread: Thread, show_context: bool | None = None) -> None:
+            widgets.extend(thread_views(thread, names, False, show_context))
 
         if file_diff is None:
             widgets.append(Static(Text('No diff for this file.', style='dim italic')))
             for thread in threads:
-                add_thread(thread)
+                add_thread(thread, show_context=True)
             await self._replace(widgets)
             return
 
@@ -230,9 +232,10 @@ class DiffView(ScrollableContainer):
         for thread in threads:
             root = thread[0][0]
             index = file_diff.line_index(root.line_to, root.line_from)
-            if index is None or index >= len(self.lines):
-                # File-level comments, and comments on lines no longer in the diff.
-                add_thread(thread)
+            if root.outdated or index is None or index >= len(self.lines):
+                # File-level comments, and comments on lines that have since changed (their line
+                # numbers refer to an older version), shown first with the code they were on.
+                add_thread(thread, show_context=True)
             else:
                 anchored.setdefault(index, []).append(thread)
 

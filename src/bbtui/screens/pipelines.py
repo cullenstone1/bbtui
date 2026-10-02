@@ -6,7 +6,8 @@ from textual.widgets import DataTable, Footer, Header
 
 from bbtui.models import Pipeline, Repository, User, same_user
 from bbtui.screens.base import BaseScreen
-from bbtui.screens.pipeline_run import PipelineRunScreen, status_text
+from bbtui.screens.pipeline_run import PipelineRunScreen, run_url, status_text
+from bbtui.screens.url import UrlScreen
 from bbtui.text import ago, duration, one_line, truncate
 
 POLL_SECONDS = 15
@@ -20,7 +21,7 @@ class PipelinesScreen(BaseScreen):
         Binding('r', 'refresh', 'Refresh'),
         Binding('m', 'toggle_filter("mine")', 'Mine'),
         Binding('f', 'toggle_filter("failed")', 'Failed'),
-        Binding('o', 'open_in_browser', 'Open in browser'),
+        Binding('u', 'show_url', 'URL'),
     ]
 
     def __init__(self, repo: Repository):
@@ -121,7 +122,12 @@ class PipelinesScreen(BaseScreen):
     def action_refresh(self) -> None:
         self.load_runs()
 
-    def action_open_in_browser(self) -> None:
+    def action_show_url(self) -> None:
+        """The highlighted run's URL, or the repository's pipelines page."""
         run = self.selected_run()
-        suffix = f'/results/{run.build_number}' if run else ''
-        self.app.open_url(f'https://bitbucket.org/{self.repo.full_name}/pipelines{suffix}')
+        if run:
+            url = run_url(self.repo.workspace, self.repo.slug, run.build_number)
+            self.app.push_screen(UrlScreen(f'Pipeline #{run.build_number}', url))
+        else:
+            url = f'https://bitbucket.org/{self.repo.full_name}/pipelines'
+            self.app.push_screen(UrlScreen(f'{one_line(self.repo.full_name)} pipelines', url))

@@ -11,6 +11,7 @@ from textual.widgets import Button, Checkbox, Label, RadioButton, RadioSet, Stat
 from bbtui.merge import Check
 from bbtui.models import PullRequest
 from bbtui.text import one_line
+from bbtui.vim import VIM_BINDINGS, VimNavigation
 
 STRATEGY_LABELS = {
     'merge_commit': 'Merge commit',
@@ -41,8 +42,9 @@ def default_merge_message(pr: PullRequest) -> str:
     return '\n'.join(lines)
 
 
-class MergeScreen(ModalScreen[MergeChoice | None]):
+class MergeScreen(VimNavigation, ModalScreen[MergeChoice | None]):
     BINDINGS = [
+        *VIM_BINDINGS,
         Binding('ctrl+s', 'merge', 'Merge', priority=True),
         Binding('escape', 'cancel', 'Cancel', priority=True),
     ]

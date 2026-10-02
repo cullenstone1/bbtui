@@ -181,6 +181,16 @@ class Comment:
     """New-file line number of an inline comment."""
     line_from: int | None = None
     """Old-file line number of an inline comment on a removed line."""
+    outdated: bool = False
+    """An inline comment whose line has changed since it was made."""
+    context: str = ''
+    """For inline comments, the diff lines around the commented line when it was made."""
+    resolved_by: User | None = None
+    resolved_on: datetime | None = None
+
+    @property
+    def resolved(self) -> bool:
+        return self.resolved_by is not None
 
     @property
     def is_inline(self) -> bool:
@@ -193,6 +203,9 @@ class Comment:
     @classmethod
     def from_api(cls, data: dict) -> 'Comment':
         inline = data.get('inline') or {}
+        # The comments list gives an empty `resolution` for a resolved thread unless its fields
+        # are asked for, so the key's presence is what marks it resolved.
+        resolution = data.get('resolution')
         return cls(
             id=int(data['id']),
             author=User.from_api(data.get('user')),
@@ -203,6 +216,10 @@ class Comment:
             path=inline.get('path'),
             line_to=inline.get('to'),
             line_from=inline.get('from'),
+            outdated=bool(inline.get('outdated')),
+            context=inline.get('context_lines') or '',
+            resolved_by=None if resolution is None else User.from_api(resolution.get('user')),
+            resolved_on=_datetime((resolution or {}).get('created_on')),
         )
 
 

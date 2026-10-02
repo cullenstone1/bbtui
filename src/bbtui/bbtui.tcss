@@ -17,6 +17,7 @@
 #builds,
 #reviewers,
 #description,
+#history,
 #general-comments,
 #file-chooser,
 #diff-view,
@@ -78,7 +79,8 @@
 #summary,
 #merge-checks,
 #builds,
-#reviewers {
+#reviewers,
+#history {
     height: auto;
     padding: 0 1;
 }

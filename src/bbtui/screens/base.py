@@ -5,12 +5,15 @@ from textual.screen import Screen
 
 from bbtui.api import BitbucketAPI, BitbucketError
 from bbtui.config import Settings
+from bbtui.vim import VIM_BINDINGS, VimNavigation
 
 if TYPE_CHECKING:
     from bbtui.app import BBTUI
 
 
-class BaseScreen(Screen):
+class BaseScreen(VimNavigation, Screen):
+    BINDINGS = VIM_BINDINGS
+
     @property
     def bbtui(self) -> 'BBTUI':
         return cast('BBTUI', self.app)

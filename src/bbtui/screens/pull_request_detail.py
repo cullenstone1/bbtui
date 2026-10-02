@@ -18,6 +18,7 @@ from textual.widgets import (
 
 from bbtui.api import BitbucketError, PermissionDeniedError
 from bbtui.diff import FileDiff, parse_diff
+from bbtui.history import Event
 from bbtui.merge import Check, merge_checks, verdict
 from bbtui.models import BuildStatus, Comment, DiffStat, PullRequest
 from bbtui.screens.base import BaseScreen
@@ -27,7 +28,7 @@ from bbtui.screens.merge import MergeChoice, MergeScreen
 from bbtui.screens.pipeline_run import PipelineRunScreen
 from bbtui.screens.url import UrlScreen
 from bbtui.text import ago, clean, one_line, timestamp
-from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
+from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions, thread_views
 from bbtui.widgets.comments import Thread
 
 WRITE_SCOPE_HINT = 'the API token needs the write:pullrequest:bitbucket scope'
@@ -41,6 +42,15 @@ PIPELINE_URL = re.compile(
 )
 STATUS_STYLES = {'A': 'green', 'D': 'red', 'R': 'yellow', 'M': 'blue'}
 CHECK_MARKS = {'ok': ('✔', 'green'), 'blocked': ('✗', 'red'), 'pending': ('●', 'yellow')}
+EVENT_MARKS = {
+    'opened': ('●', 'cyan'),
+    'pushed': ('↑', 'blue'),
+    'approved': ('✔', 'green'),
+    'changes': ('✗', 'red'),
+    'merged': ('●', 'magenta'),
+    'declined': ('●', 'red'),
+    'update': ('·', 'dim'),
+}
 BUILD_MARKS = {
     'SUCCESSFUL': ('✔', 'green'),
     'FAILED': ('✗', 'red'),
@@ -108,6 +118,25 @@ def builds_text(statuses: list[BuildStatus] | None, error: str | None = None) ->
     return text
 
 
+def history_text(events: 'list[Event] | BitbucketError') -> Text:
+    if not isinstance(events, list):
+        return Text(f'Unavailable: {one_line(str(events))}', style='dim')
+    if not events:
+        return Text('No history', style='dim')
+    text = Text()
+    for event in events:
+        mark, style = EVENT_MARKS.get(event.kind, EVENT_MARKS['update'])
+        text.append(f'{timestamp(event.date)}  ', style='dim')
+        text.append(f'{mark} ', style=style)
+        text.append(one_line(event.user.display_name), style='bold')
+        action = one_line(event.action)
+        if event.count > 1:
+            action = f'pushed {event.count} times, latest {action.removeprefix("pushed ")}'
+        text.append(f' {action}\n')
+    text.rstrip()
+    return text
+
+
 def reviewers_text(pr: PullRequest) -> Text:
     text = Text()
     if not pr.reviewers:
@@ -128,7 +157,6 @@ class PullRequestDetailScreen(BaseScreen):
     BINDINGS = [
         Binding('escape', 'app.pop_screen', 'Back'),
         Binding('r', 'refresh', 'Refresh'),
-        Binding('o', 'open_in_browser', 'Open in browser'),
         Binding('u', 'show_url', 'URL'),
         Binding('p', 'open_build', 'Build'),
         Binding('a', 'toggle_review("approve")', 'Approve'),
@@ -168,6 +196,7 @@ class PullRequestDetailScreen(BaseScreen):
                         yield Static(id='builds')
                     yield Static(id='reviewers')
                     yield Markdown(id='description', open_links=True)
+                    yield Static(id='history')
                     yield Vertical(id='general-comments')
             with TabPane('Diff', id='diff'):
                 yield DataTable(id='file-chooser', cursor_type='row', zebra_stripes=True)
@@ -181,6 +210,7 @@ class PullRequestDetailScreen(BaseScreen):
         self.query_one('#builds').border_title = 'Builds'
         self.query_one('#reviewers').border_title = 'Reviewers'
         self.query_one('#description').border_title = 'Description'
+        self.query_one('#history').border_title = 'History'
         self.query_one('#general-comments').border_title = 'Comments'
         self.query_one('#diff-view').border_title = 'Diff'
         chooser = self.query_one('#file-chooser', DataTable)
@@ -199,13 +229,14 @@ class PullRequestDetailScreen(BaseScreen):
         ws, slug, pr_id = self.workspace, self.repo_slug, self.pr_id
         try:
             # Builds and tasks are nice-to-haves: a failure there shouldn't hide the PR.
-            pr, diffstat, comments, diff, statuses, open_tasks = await asyncio.gather(
+            pr, diffstat, comments, diff, statuses, open_tasks, history = await asyncio.gather(
                 self.api.pull_request(ws, slug, pr_id),
                 self.api.pull_request_diffstat(ws, slug, pr_id),
                 self.api.pull_request_comments(ws, slug, pr_id),
                 self.api.pull_request_diff(ws, slug, pr_id),
                 _optional(self.api.pull_request_statuses(ws, slug, pr_id)),
                 _optional(self.api.pull_request_open_task_count(ws, slug, pr_id)),
+                _optional(self.api.pull_request_history(ws, slug, pr_id)),
             )
         except Exception as exc:
             self.report_error(exc, 'Loading pull request')
@@ -217,22 +248,23 @@ class PullRequestDetailScreen(BaseScreen):
             path: file_diff for file_diff in parse_diff(clean(diff)) for path in file_diff.paths
         }
         self.names = known_names(pr, comments)
-        await self.show_overview(pr, statuses, open_tasks)
+        await self.show_overview(pr, statuses, open_tasks, history)
         await self.show_comments(comments)
 
     async def reload_overview(self) -> None:
-        """Re-fetch the pull request, builds and tasks (after a review action)."""
+        """Re-fetch the pull request, builds, tasks and history (after a review action)."""
         ws, slug, pr_id = self.workspace, self.repo_slug, self.pr_id
         try:
-            pr, statuses, open_tasks = await asyncio.gather(
+            pr, statuses, open_tasks, history = await asyncio.gather(
                 self.api.pull_request(ws, slug, pr_id),
                 _optional(self.api.pull_request_statuses(ws, slug, pr_id)),
                 _optional(self.api.pull_request_open_task_count(ws, slug, pr_id)),
+                _optional(self.api.pull_request_history(ws, slug, pr_id)),
             )
         except Exception as exc:
             self.report_error(exc, 'Reloading pull request')
             return
-        await self.show_overview(pr, statuses, open_tasks)
+        await self.show_overview(pr, statuses, open_tasks, history)
 
     async def reload_comments(self) -> None:
         """Re-fetch comments (after posting one), keeping the diff where it was."""
@@ -252,6 +284,7 @@ class PullRequestDetailScreen(BaseScreen):
         pr: PullRequest,
         statuses: 'list[BuildStatus] | BitbucketError',
         open_tasks: 'int | BitbucketError',
+        history: 'list[Event] | BitbucketError',
     ) -> None:
         self.pull_request = pr
         self.show_checks(pr, self.diffstat, statuses, open_tasks)
@@ -259,6 +292,7 @@ class PullRequestDetailScreen(BaseScreen):
         reviewers = self.query_one('#reviewers', Static)
         reviewers.update(reviewers_text(pr))
         reviewers.border_subtitle = f'{pr.approvals} approved'
+        self.query_one('#history', Static).update(history_text(history))
         description = resolve_mentions(clean(pr.description), self.names)
         await self.query_one('#description', Markdown).update(description or '_No description_')
 
@@ -299,9 +333,7 @@ class PullRequestDetailScreen(BaseScreen):
         container = self.query_one('#general-comments', Vertical)
         await container.remove_children()
         if threads:
-            await container.mount_all(
-                CommentView(comment, depth, self.names) for t in threads for comment, depth in t
-            )
+            await container.mount_all(view for t in threads for view in thread_views(t, self.names))
         else:
             await container.mount(Static(Text('No general comments', style='dim')))
         inline = sum(len(t) for t in self.inline_threads)
@@ -336,7 +368,11 @@ class PullRequestDetailScreen(BaseScreen):
 
     @on(DataTable.RowHighlighted, '#file-chooser')
     def file_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        # Rebuilding the chooser re-highlights the current row; don't reset that file's view.
+        # Rebuilding the chooser (after posting a comment) first highlights row 0, then moves back
+        # to the current row; skip highlights the cursor has already left, and don't reset the
+        # view of the file that's already shown.
+        if event.cursor_row != event.data_table.cursor_row:
+            return
         if event.cursor_row != self.shown_file:
             self.show_file(event.cursor_row)
 
@@ -587,10 +623,6 @@ class PullRequestDetailScreen(BaseScreen):
             return
         self.notify(f'Merged #{pr.id} into {pr.destination_branch}', markup=False)
         await self.reload_overview()
-
-    def action_open_in_browser(self) -> None:
-        if self.pull_request:
-            self.app.open_url(self.pull_request.url)
 
     def action_show_url(self) -> None:
         pr = self.pull_request

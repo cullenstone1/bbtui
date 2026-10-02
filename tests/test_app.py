@@ -1,3 +1,5 @@
+import sys
+
 from textual.widgets import (
     Button,
     DataTable,
@@ -13,6 +15,7 @@ from textual.widgets import (
 from bbtui.api import PermissionDeniedError
 from bbtui.app import BBTUI
 from bbtui.config import Settings
+from bbtui.history import pull_request_history
 from bbtui.models import (
     Branch,
     BuildStatus,
@@ -51,6 +54,29 @@ DIFF = (
     'diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n tail\n'
     'diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1 @@\n-b-old\n+b-new\n'
 )
+
+
+def update_json(user: str, date: str, commit: str, **fields) -> dict:
+    return {
+        'update': {
+            'author': user_json(user),
+            'date': f'2026-09-{date}+00:00',
+            'source': {'commit': {'hash': commit}},
+            'draft': False,
+            'changes': {},
+            **fields,
+        }
+    }
+
+
+ACTIVITY = [  # Newest first, as Bitbucket sends it.
+    {'approval': {'user': user_json('Bob'), 'date': '2026-09-30T09:00:00+00:00'}},
+    update_json('Ada', '29T12:00:00', 'c3', changes={'draft': {'old': True, 'new': False}}),
+    update_json('Ada', '29T11:30:00', 'c3'),
+    update_json('Ada', '29T11:00:00', 'c2'),
+    update_json('Ada', '29T10:00:01', 'c1', changes={'reviewers': {'added': [user_json('Bob')]}}),
+    update_json('Ada', '29T10:00:00', 'c1', draft=True),
+]
 
 
 class FakeAPI:
@@ -155,10 +181,35 @@ class FakeAPI:
             ),
             Comment.from_api(comment_json(4, 'inline reply', parent=3)),
             Comment.from_api(
-                comment_json(5, 'outdated', inline={'path': 'a.py', 'to': 99, 'from': None})
+                comment_json(
+                    5,
+                    'outdated',
+                    inline={
+                        'path': 'a.py',
+                        'to': 2,
+                        'from': None,
+                        'outdated': True,
+                        'context_lines': '--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@\n ctx\n+older',
+                    },
+                )
             ),
+            Comment.from_api(
+                comment_json(
+                    6,
+                    'settled question\n\nmore detail',
+                    resolution={
+                        'type': 'comment_resolution',
+                        'user': user_json('Cy'),
+                        'created_on': '2026-09-30T12:00:00+00:00',
+                    },
+                )
+            ),
+            Comment.from_api(comment_json(7, 'settled answer', parent=6)),
             *self.posted,
         ]
+
+    async def pull_request_history(self, workspace, repo_slug, pr_id):
+        return pull_request_history(ACTIVITY)
 
     async def pull_request_statuses(self, workspace, repo_slug, pr_id):
         if repo_slug == 'gadgets':
@@ -329,7 +380,12 @@ async def test_dashboard_to_pull_request_detail_and_back():
         await settle(app, pilot)
         # General comments are on the overview; inline ones are not.
         overview = list(detail.query_one('#general-comments').query(CommentView))
-        assert [(card.comment.id, card.depth) for card in overview] == [(1, 0), (2, 1)]
+        assert [(card.comment.id, card.depth) for card in overview] == [
+            (1, 0),
+            (2, 1),
+            (6, 0),
+            (7, 1),
+        ]
 
         await pilot.press('escape')
         await pilot.pause()
@@ -537,6 +593,83 @@ async def test_reply_to_focused_comment_and_drafts_survive_cancel():
             {'path': None, 'line_to': None, 'line_from': None, 'parent_id': 1},
         ) in api.calls
         assert detail.drafts == {}
+
+
+async def test_commenting_on_a_later_file_keeps_the_file_and_scroll(monkeypatch):
+    body = ''.join(f'+line {i}\n' for i in range(300))
+    long_b = f'diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -0,0 +1,300 @@\n{body}'
+    monkeypatch.setattr(sys.modules[__name__], 'DIFF', DIFF.split('diff --git a/b.py')[0] + long_b)
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        await pilot.press('2', 'right_square_bracket')
+        await pilot.pause(0.2)
+        await settle(app, pilot)
+        await pilot.press('enter')
+        view = detail.query_one(DiffView)
+        view.move_cursor(150)
+        await pilot.pause()
+        cursor, scroll_y = view.cursor, view.scroll_y
+        assert scroll_y > 0
+        await type_comment(app, pilot, 'deep in b.py')
+        await pilot.pause(0.2)
+        await settle(app, pilot)
+        # Still on b.py, same line, same place on screen (it used to jump to a.py's top).
+        assert detail.shown_file == 1
+        assert detail.query_one('#file-chooser', DataTable).cursor_row == 1
+        assert (view.cursor, view.scroll_y) == (cursor, scroll_y)
+        assert 'deep in b.py' in [c.comment.body for c in view.query(CommentView)]
+
+
+async def test_history_on_the_overview():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        history = str(detail.query_one('#history', Static).render())
+        lines = [line.split('  ', 1)[1] for line in history.splitlines()]
+        assert lines == [
+            '● Ada opened as a draft',
+            '· Ada added reviewers Bob',
+            '↑ Ada pushed 2 times, latest c3',
+            '· Ada marked ready',
+            '✔ Bob approved',
+        ]
+
+
+async def test_outdated_and_resolved_comments():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        # Resolved thread: collapsed to its first line, replies hidden; Enter expands it.
+        cards = {c.comment.id: c for c in detail.query_one('#general-comments').query(CommentView)}
+        root, reply = cards[6], cards[7]
+        assert root.has_class('resolved')
+        assert root.source == 'settled question'
+        assert not reply.display
+        assert 'resolved by Cy' in str(root.border_subtitle)
+        assert '1 reply hidden' in str(root.border_subtitle)
+        assert not cards[1].has_class('resolved') and cards[2].display
+        root.focus()
+        await pilot.press('enter')
+        await pilot.pause()
+        assert reply.display
+        assert 'more detail' in root.source
+        assert 'hidden' not in str(root.border_subtitle)
+        await pilot.press('enter')
+        await pilot.pause()
+        assert not reply.display
+
+        # Outdated inline comment: labelled, first in the file, with the code it was made on.
+        await pilot.press('2')
+        await settle(app, pilot)
+        view = detail.query_one(DiffView)
+        outdated = view.query(CommentView).first()
+        assert outdated.comment.id == 5
+        assert 'outdated' in str(outdated.border_title)
+        assert outdated.source.startswith('```diff\n ctx\n+older\n```')
 
 
 async def test_comment_on_a_hunk_header_is_refused():
@@ -938,3 +1071,86 @@ async def test_url_hotkey_everywhere(monkeypatch):
         assert (
             await show_url(app, pilot) == 'https://bitbucket.org/acme/widgets/pipelines/results/42'
         )
+
+        # Pipelines list: the highlighted run.
+        app.push_screen(PipelinesScreen(Repository.from_api(repository_json('widgets'))))
+        await settle(app, pilot)
+        assert (
+            await show_url(app, pilot) == 'https://bitbucket.org/acme/widgets/pipelines/results/43'
+        )
+
+        # `o` no longer opens anything outside the URL dialog.
+        opened.clear()
+        await pilot.press('o')
+        await pilot.pause()
+        assert opened == []
+
+
+async def test_vim_keys():
+    api = FakeAPI(me='Ada')
+    app = make_app(api)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await settle(app, pilot)
+        dashboard = app.screen
+        starred = dashboard.query_one('#starred', ListView)
+        others = dashboard.query_one('#others', ListView)
+        mine = dashboard.query_one('#mine', ListView)
+        nightly = dashboard.query_one('#nightly', ListView)
+
+        # j/k move within a list.
+        others.focus()
+        await pilot.press('j')
+        assert others.index == 0  # Only one item; stays put.
+        mine.focus()
+        await pilot.press('j')
+        assert mine.index == 1
+        await pilot.press('k')
+        assert mine.index == 0
+
+        # h/l switch columns, returning to the list you were last in.
+        others.focus()
+        await pilot.press('l')
+        assert app.focused is mine
+        nightly.focus()
+        await pilot.press('h')
+        assert app.focused is others
+        await pilot.press('l')
+        assert app.focused is nightly
+        starred.focus()
+        await pilot.press('l', 'h')
+        assert app.focused is starred
+
+        # Typing in the search box is unaffected.
+        await pilot.press('slash', *'hjkl')
+        assert dashboard.query_one('#search', Input).value == 'hjkl'
+
+        # Tables: j/k move the cursor.
+        app.push_screen(PullRequestsScreen(Repository.from_api(repository_json('widgets'))))
+        await settle(app, pilot)
+        table = app.screen.query_one(DataTable)
+        await pilot.press('j')
+        assert table.cursor_row == 1
+        await pilot.press('k')
+        assert table.cursor_row == 0
+
+        # Pull request overview: j scrolls; the merge dialog's strategies follow j/k.
+        await pilot.press('enter')
+        await settle(app, pilot)
+        detail = app.screen
+        overview = detail.query_one('#overview-scroll')
+        overview.focus()
+        assert overview.max_scroll_y > 0  # The overview overflows at this size.
+        await pilot.press(*'jjjjj')
+        await pilot.pause()
+        assert overview.scroll_y > 0
+        await pilot.press('m')
+        await settle(app, pilot)
+        dialog = app.screen
+        assert isinstance(dialog, MergeScreen)
+        dialog.query_one(RadioSet).focus()
+        await pilot.press('j', 'j', 'enter')  # The highlight starts on the first strategy.
+        await pilot.pause()
+        assert dialog.strategy == 'fast_forward'
+        await pilot.press('k', 'k', 'enter')
+        await pilot.pause()
+        assert dialog.strategy == 'merge_commit'
