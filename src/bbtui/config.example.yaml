@@ -1,4 +1,5 @@
-# Copy to ~/.config/bbtui/config.yaml (or point BBTUI_CONFIG_FILE at it).
+# bbtui settings. `bbtui --init` writes this file for you; it lives at
+# ~/.config/bbtui/config.yaml (or wherever BBTUI_CONFIG_FILE points).
 # Any setting can also come from a BBTUI_<NAME> environment variable, e.g. BBTUI_API_TOKEN.
 
 # Your Atlassian account email.
@@ -6,10 +7,11 @@ username: you@example.com
 
 # A *scoped* Atlassian API token with Bitbucket scopes. Classic unscoped tokens (the kind Jira
 # accepts) are rejected with "API Token provided has no Bitbucket scopes."
-# Create one at https://id.atlassian.com/manage-profile/security/api-tokens with at least:
+# Create one at https://id.atlassian.com/manage-profile/security/api-tokens
+# ("Create API token with scopes", app: Bitbucket) with at least:
 #   read:user:bitbucket, read:workspace:bitbucket, read:repository:bitbucket,
 #   read:pullrequest:bitbucket, read:pipeline:bitbucket
-# and, to approve and comment, write:pullrequest:bitbucket
+# and, to approve, comment and merge, write:pullrequest:bitbucket
 # and, to re-run and stop pipelines, write:pipeline:bitbucket
 api_token: ATATT...
 
@@ -18,9 +20,9 @@ workspace: your-workspace
 
 # Repositories pinned to the dashboard, as `repo_slug` or `workspace/repo_slug`.
 # (Bitbucket has no public API for the stars in its web UI, so they live here.)
-starred_repos:
-  - some-repo
-  - another-workspace/other-repo
+starred_repos: []
+#  - some-repo
+#  - another-workspace/other-repo
 
 # How many recently updated repositories the dashboard shows.
 recent_repos_limit: 10
