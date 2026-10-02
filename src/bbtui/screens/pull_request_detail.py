@@ -25,6 +25,7 @@ from bbtui.screens.composer import CommentComposer, CommentTarget
 from bbtui.screens.confirm import ConfirmScreen
 from bbtui.screens.merge import MergeChoice, MergeScreen
 from bbtui.screens.pipeline_run import PipelineRunScreen
+from bbtui.screens.url import UrlScreen
 from bbtui.text import ago, clean, one_line, timestamp
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
 from bbtui.widgets.comments import Thread
@@ -128,6 +129,7 @@ class PullRequestDetailScreen(BaseScreen):
         Binding('escape', 'app.pop_screen', 'Back'),
         Binding('r', 'refresh', 'Refresh'),
         Binding('o', 'open_in_browser', 'Open in browser'),
+        Binding('u', 'show_url', 'URL'),
         Binding('p', 'open_build', 'Build'),
         Binding('a', 'toggle_review("approve")', 'Approve'),
         Binding('x', 'toggle_review("changes")', 'Request changes'),
@@ -587,5 +589,13 @@ class PullRequestDetailScreen(BaseScreen):
         await self.reload_overview()
 
     def action_open_in_browser(self) -> None:
-        if self.pull_request and self.pull_request.html_url:
-            self.app.open_url(self.pull_request.html_url)
+        if self.pull_request:
+            self.app.open_url(self.pull_request.url)
+
+    def action_show_url(self) -> None:
+        pr = self.pull_request
+        if pr is None:
+            url = f'https://bitbucket.org/{self.workspace}/{self.repo_slug}/pull-requests/{self.pr_id}'
+            self.app.push_screen(UrlScreen(f'#{self.pr_id}', url))
+        else:
+            self.app.push_screen(UrlScreen(f'#{pr.id} {one_line(pr.title)}', pr.url))

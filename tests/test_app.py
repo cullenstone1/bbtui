@@ -34,6 +34,7 @@ from bbtui.screens.merge import MergeScreen
 from bbtui.screens.pipeline_run import PipelineRunScreen
 from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import known_names
+from bbtui.screens.url import UrlScreen
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
 from bbtui.widgets.log_view import LogView
 from tests.factories import (
@@ -884,3 +885,56 @@ async def test_merge_dialog():
         await pilot.press('m')
         await pilot.pause()
         assert app.screen is detail  # Already merged.
+
+
+async def show_url(app, pilot) -> str:
+    await pilot.press('u')
+    await pilot.pause()
+    assert isinstance(app.screen, UrlScreen)
+    url = app.screen.url
+    await pilot.press('escape')
+    await pilot.pause()
+    return url
+
+
+async def test_url_hotkey_everywhere(monkeypatch):
+    api = FakeAPI(me='Ada')
+    app = make_app(api)
+    copied, opened = [], []
+    async with app.run_test(size=(160, 45)) as pilot:
+        app.copy_to_clipboard = copied.append
+        # No clipboard tool here, so copying falls back to the terminal (OSC 52).
+        monkeypatch.setattr('bbtui.screens.url.copy_with_tool', lambda text: None)
+        app.open_url = lambda url, **kwargs: opened.append(url)
+        await settle(app, pilot)
+        # Dashboard: the highlighted item of the focused list.
+        app.screen.query_one('#mine', ListView).focus()
+        assert await show_url(app, pilot) == 'https://bitbucket.org/acme/widgets/pull-requests/21'
+        app.screen.query_one('#starred', ListView).focus()
+        assert await show_url(app, pilot) == 'https://bitbucket.org/acme/widgets'
+
+        # Pull request list: the highlighted pull request; `y` copies.
+        app.push_screen(PullRequestsScreen(Repository.from_api(repository_json('widgets'))))
+        await settle(app, pilot)
+        await pilot.press('u')
+        await pilot.pause()
+        await pilot.press('y')
+        await pilot.pause()
+        assert copied == ['https://bitbucket.org/acme/widgets/pull-requests/11']
+        assert not isinstance(app.screen, UrlScreen)
+
+        # Pull request: `o` in the dialog opens it.
+        await pilot.press('enter')
+        await settle(app, pilot)
+        await pilot.press('u')
+        await pilot.pause()
+        await pilot.press('o')
+        await pilot.pause()
+        assert opened == ['https://bitbucket.org/acme/widgets/pull-requests/11']
+
+        # Pipeline run.
+        app.push_screen(PipelineRunScreen('acme', 'widgets', 42))
+        await settle(app, pilot)
+        assert (
+            await show_url(app, pilot) == 'https://bitbucket.org/acme/widgets/pipelines/results/42'
+        )

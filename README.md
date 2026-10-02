@@ -62,6 +62,7 @@ cp bbtui.example.yaml ~/.config/bbtui/config.yaml   # then fill it in
 | Screen | Key | Action |
 | --- | --- | --- |
 | Everywhere | `q` | Quit |
+| | `u` | Show the URL of the pull request, run or repository (`y` copies, `o` opens) |
 | Dashboard | `/` | Search repositories (Enter to run, Esc to clear) |
 | | `Enter` | Open the repository's pull requests, or your pull request |
 | | `Tab` | Move between panels |

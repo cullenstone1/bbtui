@@ -128,6 +128,11 @@ class PullRequest:
     merge_commit: str | None = None
 
     @property
+    def url(self) -> str:
+        """The pull request's page on bitbucket.org."""
+        return self.html_url or f'https://bitbucket.org/{self.repository}/pull-requests/{self.id}'
+
+    @property
     def reviewers(self) -> list[Participant]:
         return [p for p in self.participants if p.role == 'REVIEWER']
 

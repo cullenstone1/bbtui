@@ -393,3 +393,34 @@ MergeScreen {
 #merge-buttons Button {
     margin-left: 2;
 }
+
+/* URL dialog */
+UrlScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#url-dialog {
+    width: auto;
+    min-width: 50;
+    max-width: 95%;
+    height: auto;
+    border: round $accent;
+    border-title-color: $accent;
+    background: $surface;
+    padding: 1 2;
+}
+
+#url-text {
+    width: auto;
+    margin-bottom: 1;
+}
+
+#url-buttons {
+    width: auto;
+    height: auto;
+}
+
+#url-buttons Button {
+    margin-right: 2;
+}

@@ -12,6 +12,7 @@ from bbtui.logs import LineDecoder, plain
 from bbtui.models import Pipeline, PipelineStep
 from bbtui.screens.base import BaseScreen
 from bbtui.screens.confirm import ConfirmScreen
+from bbtui.screens.url import UrlScreen
 from bbtui.text import duration, one_line, relative, timestamp
 from bbtui.widgets.log_view import LogView
 
@@ -75,6 +76,7 @@ class PipelineRunScreen(BaseScreen):
         Binding('s', 'stop', 'Stop'),
         Binding('slash', 'search', 'Search log'),
         Binding('o', 'open_in_browser', 'Open in browser'),
+        Binding('u', 'show_url', 'URL'),
     ]
 
     def __init__(self, workspace: str, repo_slug: str, build_number: int, label: str = ''):
@@ -284,6 +286,9 @@ class PipelineRunScreen(BaseScreen):
 
     def action_open_in_browser(self) -> None:
         self.app.open_url(self.url)
+
+    def action_show_url(self) -> None:
+        self.app.push_screen(UrlScreen(f'Pipeline #{self.build_number}', self.url))
 
     def action_rerun(self) -> None:
         run = self.run

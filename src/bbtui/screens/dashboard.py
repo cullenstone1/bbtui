@@ -11,9 +11,10 @@ from bbtui.api.api import split_repo_name
 from bbtui.merge import build_check
 from bbtui.models import BuildStatus, Pipeline, PullRequest, Repository, Schedule
 from bbtui.screens.base import BaseScreen
-from bbtui.screens.pipeline_run import PipelineRunScreen, status_text
+from bbtui.screens.pipeline_run import PipelineRunScreen, run_url, status_text
 from bbtui.screens.pull_request_detail import PullRequestDetailScreen
 from bbtui.screens.pull_requests import PullRequestsScreen
+from bbtui.screens.url import UrlScreen
 from bbtui.text import duration, one_line, relative
 from bbtui.watch import WatchedBuild
 
@@ -122,6 +123,7 @@ class DashboardScreen(BaseScreen):
     BINDINGS = [
         Binding('slash', 'focus_search', 'Search'),
         Binding('r', 'refresh', 'Refresh'),
+        Binding('u', 'show_url', 'URL'),
         Binding('escape', 'clear_search', 'Clear search', show=False),
     ]
 
@@ -323,6 +325,18 @@ class DashboardScreen(BaseScreen):
         elif isinstance(event.item, PullRequestItem):
             workspace, slug = event.item.pr.repository.split('/', 1)
             self.app.push_screen(PullRequestDetailScreen(workspace, slug, event.item.pr.id))
+
+    def action_show_url(self) -> None:
+        """The URL of the highlighted pull request, scheduled run or repository."""
+        focused = self.focused
+        item = focused.highlighted_child if isinstance(focused, ListView) else None
+        if isinstance(item, PullRequestItem):
+            self.app.push_screen(UrlScreen(f'#{item.pr.id} {one_line(item.pr.title)}', item.pr.url))
+        elif isinstance(item, NightlyItem) and item.run:
+            url = run_url(item.repo.workspace, item.repo.slug, item.run.build_number)
+            self.app.push_screen(UrlScreen(f'{item.repo.slug} #{item.run.build_number}', url))
+        elif isinstance(item, RepositoryItem) and item.repo.html_url:
+            self.app.push_screen(UrlScreen(one_line(item.repo.full_name), item.repo.html_url))
 
     def action_focus_search(self) -> None:
         self.query_one('#search', Input).focus()

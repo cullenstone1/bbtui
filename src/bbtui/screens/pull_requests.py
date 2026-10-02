@@ -9,6 +9,7 @@ from bbtui.screens.base import BaseScreen
 from bbtui.screens.create_pull_request import CreatePullRequestScreen
 from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import PullRequestDetailScreen
+from bbtui.screens.url import UrlScreen
 from bbtui.text import ago, one_line, truncate
 
 STATES = ('OPEN', 'MERGED', 'DECLINED')
@@ -31,6 +32,7 @@ class PullRequestsScreen(BaseScreen):
         Binding('r', 'refresh', 'Refresh'),
         Binding('s', 'cycle_state', 'State'),
         Binding('o', 'open_in_browser', 'Open in browser'),
+        Binding('u', 'show_url', 'URL'),
         Binding('n', 'new_pull_request', 'New PR'),
         Binding('P', 'pipelines', 'Pipelines'),
     ]
@@ -117,9 +119,16 @@ class PullRequestsScreen(BaseScreen):
 
     def action_open_in_browser(self) -> None:
         pr = self.selected_pull_request()
-        url = pr.html_url if pr else self.repo.html_url
+        url = pr.url if pr else self.repo.html_url
         if url:
             self.app.open_url(url)
+
+    def action_show_url(self) -> None:
+        pr = self.selected_pull_request()
+        if pr:
+            self.app.push_screen(UrlScreen(f'#{pr.id} {one_line(pr.title)}', pr.url))
+        elif self.repo.html_url:
+            self.app.push_screen(UrlScreen(one_line(self.repo.full_name), self.repo.html_url))
 
     def on_screen_resume(self) -> None:
         # Coming back from a pull request: it may have been merged, approved or marked ready.
