@@ -137,6 +137,42 @@ class BitbucketAPI:
         )
         return [PullRequest.from_api(v) for v in values]
 
+    async def pull_requests_reviewed_by(
+        self, repos: Sequence[tuple[str, str]], user_uuid: str, limit: int = 50
+    ) -> list[PullRequest]:
+        """Open pull requests with a user as reviewer, across `(workspace, slug)` repositories,
+        most recently updated first.
+
+        Bitbucket has no workspace-wide reviewer query, so this asks each repository; one
+        that can't be read is skipped.
+        """
+        params = {
+            'q': f'reviewers.uuid = {_bbql_string(user_uuid)} AND state = "OPEN"',
+            'pagelen': min(limit, 50),
+            'fields': '+values.participants',
+        }
+        limiter = asyncio.Semaphore(10)
+
+        async def fetch(workspace: str, slug: str) -> list[dict]:
+            async with limiter:
+                return await self.client.get_all(
+                    f'/repositories/{workspace}/{slug}/pullrequests', params, limit=limit
+                )
+
+        results = await asyncio.gather(
+            *(fetch(ws, slug) for ws, slug in dict.fromkeys(repos)), return_exceptions=True
+        )
+        pull_requests: list[PullRequest] = []
+        for result in results:
+            if isinstance(result, list):
+                pull_requests.extend(PullRequest.from_api(value) for value in result)
+            elif not isinstance(result, BitbucketError):
+                raise result
+        pull_requests.sort(
+            key=lambda pr: pr.updated_on.timestamp() if pr.updated_on else 0, reverse=True
+        )
+        return pull_requests[:limit]
+
     async def pull_request(self, workspace: str, repo_slug: str, pr_id: int) -> PullRequest:
         data = await self.client.get_json(
             f'/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}'
@@ -261,6 +297,27 @@ class BitbucketAPI:
         )
         return [Branch.from_api(v) for v in values]
 
+    async def refs(
+        self, workspace: str, repo_slug: str, search: str = '', limit: int = 30
+    ) -> list[Branch]:
+        """Branches and tags, most recently committed first, optionally filtered by name."""
+        params: dict = {'sort': '-target.date', 'pagelen': min(limit, MAX_PAGELEN)}
+        if search:
+            params['q'] = f'name ~ {_bbql_string(search)}'
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/refs', params, limit=limit
+        )
+        return [Branch.from_api(v) for v in values]
+
+    async def tags(self, workspace: str, repo_slug: str, limit: int = 1000) -> list[Branch]:
+        """Tags, newest first."""
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/refs/tags',
+            {'sort': '-target.date', 'pagelen': MAX_PAGELEN},
+            limit=limit,
+        )
+        return [Branch.from_api(v) for v in values]
+
     async def branch_exists(self, workspace: str, repo_slug: str, name: str) -> bool:
         try:
             await self.client.get_json(
@@ -293,6 +350,41 @@ class BitbucketAPI:
             limit=limit,
         )
         return [Commit.from_api(v) for v in values]
+
+    async def commits(
+        self,
+        workspace: str,
+        repo_slug: str,
+        branch: str,
+        exclude: str | None = None,
+        page: str | None = None,
+        pagelen: int = 30,
+    ) -> tuple[list[Commit], str | None]:
+        """One page of `branch`'s commits (newest first), optionally only those not on `exclude`,
+        and the URL of the next page. Bitbucket is slow at this (~70 ms per commit of a long
+        history), so callers fetch a page at a time."""
+        if page:
+            data = await self.client.get_json(page)
+        else:
+            params = {'include': branch, 'pagelen': pagelen}
+            if exclude:
+                params['exclude'] = exclude
+            data = await self.client.get_json(
+                f'/repositories/{workspace}/{repo_slug}/commits', params
+            )
+        return [Commit.from_api(v) for v in data.get('values') or []], data.get('next')
+
+    async def commit_diffstat(self, workspace: str, repo_slug: str, commit: str) -> list[DiffStat]:
+        """Files changed by `commit` (against its first parent)."""
+        values = await self.client.get_all(
+            f'/repositories/{workspace}/{repo_slug}/diffstat/{commit}',
+            {'pagelen': MAX_PAGELEN},
+            limit=1000,
+        )
+        return [DiffStat.from_api(v) for v in values]
+
+    async def commit_diff(self, workspace: str, repo_slug: str, commit: str) -> str:
+        return await self.client.get_text(f'/repositories/{workspace}/{repo_slug}/diff/{commit}')
 
     async def diffstat_between(
         self, workspace: str, repo_slug: str, source: str, destination: str

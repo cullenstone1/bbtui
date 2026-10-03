@@ -1,11 +1,14 @@
 /* Rounded, titled borders on every panel, as in jiratui; the focused panel lights up. */
 
 #search,
+#review,
 #starred,
 #others,
 #nightly,
 #mine,
 #pipelines,
+#commits,
+#commit-message,
 #run-summary,
 #run-steps,
 #run-failures,
@@ -29,11 +32,14 @@
 }
 
 #search:focus,
+#review:focus,
 #starred:focus,
 #others:focus,
 #nightly:focus,
 #mine:focus,
 #pipelines:focus,
+#commits:focus,
+#commit-message:focus,
 #run-steps:focus,
 #run-failures:focus,
 #run-log:focus,
@@ -53,6 +59,11 @@
 
 #dashboard {
     height: 1fr;
+}
+
+#review {
+    height: auto;
+    max-height: 40%;
 }
 
 #starred {
@@ -425,4 +436,42 @@ UrlScreen {
 
 #url-buttons Button {
     margin-right: 2;
+}
+
+/* Commits */
+#commits {
+    height: 1fr;
+}
+
+#commit-message {
+    height: auto;
+    max-height: 10;
+    padding: 0 1;
+}
+
+BranchChoiceScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#branch-dialog {
+    width: 80;
+    max-width: 95%;
+    height: auto;
+    border: round $accent;
+    border-title-color: $accent;
+    background: $surface;
+    padding: 0 1;
+}
+
+#branch-dialog .branch-picker {
+    width: 100%;
+}
+
+#branch-dialog OptionList {
+    height: 10;
+}
+
+#branch-hint {
+    margin-top: 1;
 }

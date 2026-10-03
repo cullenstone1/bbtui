@@ -5,7 +5,8 @@ from rich.text import Text
 from textual import events
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
-from textual.geometry import Region
+from textual.geometry import Region, Size
+from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -33,6 +34,7 @@ TINTS = {
     False: {'added': Style(bgcolor='#dafbe1'), 'removed': Style(bgcolor='#ffebe9')},
 }
 """Backgrounds for added/removed lines, for dark and light themes."""
+CURSOR_STYLE = Style(reverse=True)
 MARKER_STYLES = {'added': 'bold green', 'removed': 'bold red', 'context': 'dim'}
 
 
@@ -99,30 +101,70 @@ class LineTarget:
         return self.line_to or self.line_from
 
 
-class DiffLines(Static):
-    """A run of consecutive diff lines (between comment threads), with an optional cursor."""
+class DiffLines(Widget):
+    """A run of consecutive diff lines (between comment threads), with an optional cursor.
+
+    Drawn line by line (Textual's Line API): only the lines on screen are rendered, each once,
+    and moving the cursor redraws just the two lines involved. Rendering the whole run as one
+    block made every cursor move re-measure and re-render the entire file.
+    """
+
+    DEFAULT_CSS = """
+    DiffLines {
+        width: auto;
+        height: auto;
+    }
+    """
 
     def __init__(self, texts: list[Text], start: int):
+        super().__init__(classes='diff-lines')
         self.texts = texts
         self.start = start
         self.cursor: int | None = None
-        super().__init__(self._paint(), classes='diff-lines')
+        self._width = max((text.cell_len for text in texts), default=0)
+        self._strips: dict[int, Strip] = {}
 
     @property
     def end(self) -> int:
         return self.start + len(self.texts)
 
-    def _paint(self) -> Text:
-        lines = list(self.texts)
-        if self.cursor is not None:
-            lines[self.cursor] = lines[self.cursor].copy()
-            lines[self.cursor].stylize('reverse')
-        return Text('\n', no_wrap=True).join(lines)
+    @property
+    def plain(self) -> str:
+        return '\n'.join(text.plain for text in self.texts)
+
+    def get_content_width(self, container: Size, viewport: Size) -> int:
+        return self._width
+
+    def get_content_height(self, container: Size, viewport: Size, width: int) -> int:
+        return len(self.texts)
+
+    def _strip(self, y: int) -> Strip:
+        strip = self._strips.get(y)
+        if strip is None:
+            segments = list(self.texts[y].render(self.app.console))
+            strip = self._strips[y] = Strip(segments).extend_cell_length(self._width)
+        return strip
+
+    def render_line(self, y: int) -> Strip:
+        width = self.size.width
+        if not 0 <= y < len(self.texts):
+            return Strip.blank(width, self.rich_style)
+        strip = self._strip(y)
+        if y == self.cursor:
+            strip = strip.apply_style(CURSOR_STYLE)
+        return strip.extend_cell_length(width).apply_style(self.rich_style)
+
+    def notify_style_update(self) -> None:
+        super().notify_style_update()
+        self._strips.clear()
 
     def set_cursor(self, relative: int | None) -> None:
-        if relative != self.cursor:
-            self.cursor = relative
-            self.update(self._paint())
+        if relative == self.cursor:
+            return
+        for y in (self.cursor, relative):
+            if y is not None:
+                self.refresh(Region(0, y, self.size.width, 1))
+        self.cursor = relative
 
     def on_click(self, event: events.Click) -> None:
         view = self.parent

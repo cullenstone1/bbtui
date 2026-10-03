@@ -7,13 +7,14 @@ from textual.widgets import (
     Input,
     Label,
     ListView,
+    OptionList,
     RadioSet,
     SelectionList,
     Static,
     TextArea,
 )
 
-from bbtui.api import PermissionDeniedError
+from bbtui.api import NotFoundError, PermissionDeniedError
 from bbtui.app import BBTUI
 from bbtui.config import Settings
 from bbtui.history import pull_request_history
@@ -31,6 +32,7 @@ from bbtui.models import (
     User,
 )
 from bbtui.screens import DashboardScreen, PullRequestDetailScreen, PullRequestsScreen
+from bbtui.screens.commits import BranchChoiceScreen, CommitScreen, CommitsScreen
 from bbtui.screens.composer import CommentComposer
 from bbtui.screens.confirm import ConfirmScreen
 from bbtui.screens.create_pull_request import CreatePullRequestScreen
@@ -40,6 +42,7 @@ from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import known_names
 from bbtui.screens.url import UrlScreen
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
+from bbtui.widgets.diff_view import DiffLines
 from bbtui.widgets.log_view import LogView
 from tests.factories import (
     comment_json,
@@ -97,6 +100,19 @@ class FakeAPI:
         return [
             PullRequest.from_api(pull_request_json(21, 'acme/widgets', title='Mine', draft=True)),
             PullRequest.from_api(pull_request_json(22, 'other/gadgets', participants=[])),
+        ]
+
+    async def pull_requests_reviewed_by(self, repos, user_uuid, limit=50):
+        self.calls.append(('pull_requests_reviewed_by', tuple(repos), user_uuid))
+        me = {'user': {**user_json(self.me), 'uuid': user_uuid}, 'role': 'REVIEWER'}
+        return [
+            PullRequest.from_api(
+                pull_request_json(31, 'acme/widgets', title='Please look', participants=[me])
+            ),
+            PullRequest.from_api(
+                pull_request_json(32, 'acme/widgets', participants=[{**me, 'approved': True}])
+            ),
+            PullRequest.from_api(pull_request_json(33, 'acme/widgets', draft=True)),
         ]
 
     async def approve(self, workspace, repo_slug, pr_id):
@@ -231,6 +247,20 @@ class FakeAPI:
         names = ['develop', 'ABC-9-new-thing', 'ABC-8-old-thing']
         return [Branch(name) for name in names if search.lower() in name.lower()]
 
+    TAGS = [
+        Branch('v1.0', is_tag=True, target='dev68' + 'f' * 34),
+        Branch('v1.0-final', is_tag=True, target='dev68' + 'f' * 34),
+    ]
+
+    async def refs(self, workspace, repo_slug, search='', limit=30):
+        self.calls.append(('refs', search))
+        branches = await self.branches(workspace, repo_slug, search)
+        return branches + [tag for tag in self.TAGS if search.lower() in tag.name.lower()]
+
+    async def tags(self, workspace, repo_slug, limit=1000):
+        self.calls.append(('tags',))
+        return self.TAGS
+
     async def branch_exists(self, workspace, repo_slug, name):
         return True
 
@@ -245,6 +275,31 @@ class FakeAPI:
 
     async def commits_between(self, workspace, repo_slug, source, destination, limit=100):
         return [Commit(hash='abcdef123', message=f'{source} work\n\nbody')]
+
+    async def commits(self, workspace, repo_slug, branch, exclude=None, page=None, pagelen=30):
+        self.calls.append(('commits', branch, exclude, page))
+        if branch == 'nope':
+            raise NotFoundError('Not found', 404)
+        count = 3 if exclude else 70  # 3 commits ahead of `exclude`, else a long history.
+        start = int(page.split(':')[1]) if page else 0
+        commits = [
+            Commit(
+                hash=f'{branch[:3]}{i:02d}' + 'f' * 34,
+                message=f'Change {i} on {branch}\n\nWhy {i}',
+                author='Ada',
+                parents=('p' * 40,),
+            )
+            for i in range(count - 1 - start, max(-1, count - 1 - start - pagelen), -1)
+        ]
+        more = start + pagelen < count
+        return commits, (f'page:{start + pagelen}' if more else None)
+
+    async def commit_diffstat(self, workspace, repo_slug, commit):
+        self.calls.append(('commit_diffstat', commit))
+        return await self.pull_request_diffstat(workspace, repo_slug, 0)
+
+    async def commit_diff(self, workspace, repo_slug, commit):
+        return DIFF
 
     async def diffstat_between(self, workspace, repo_slug, source, destination):
         return [DiffStat.from_api(diffstat_json('modified', 'a.py', 'a.py', 5, 2))]
@@ -415,9 +470,9 @@ async def test_diff_shows_one_file_with_inline_threads():
         # The outdated comment leads, then lines up to `+new`, its thread, then the rest.
         assert kinds == ['CommentView', 'DiffLines', 'CommentView', 'CommentView', 'DiffLines']
         assert [card.comment.id for card in view.query(CommentView)] == [5, 3, 4]
-        lines = str(view.children[1].render())
+        lines = view.children[1].plain
         assert '+new' in lines and 'tail' not in lines
-        assert 'b-new' not in str(view.children[4].render())
+        assert 'b-new' not in view.children[4].plain
 
         await pilot.press('enter')
         await pilot.pause()
@@ -431,7 +486,7 @@ async def test_diff_shows_one_file_with_inline_threads():
         await pilot.pause(0.2)
         await settle(app, pilot)
         assert chooser.cursor_row == 1
-        assert 'b-new' in ''.join(str(child.render()) for child in view.children)
+        assert 'b-new' in ''.join(lines.plain for lines in view.query(DiffLines))
         assert not list(view.query(CommentView))
 
 
@@ -789,6 +844,51 @@ async def test_my_pull_requests_on_the_dashboard():
         assert isinstance(app.screen, DashboardScreen)
         # Coming back refreshes the list.
         assert api.calls.count(('pull_requests_by', 'acme', '{ada}')) == 2
+
+
+async def test_pull_requests_to_review_on_the_dashboard():
+    api = FakeAPI(me='Ada')
+    app = make_app(api)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await settle(app, pilot)
+        review = app.screen.query_one('#review', ListView)
+        # Starred repositories first, then recently updated ones.
+        repos = (
+            ('acme', 'widgets'),
+            ('acme', 'ghost'),
+            ('acme', 'widgets'),
+            ('acme', 'recent-one'),
+        )
+        assert ('pull_requests_reviewed_by', repos, '{ada}') in api.calls
+        # Already approved and draft pull requests aren't waiting for you.
+        items = list(review.children)
+        assert [item.pr.id for item in items] == [31]
+        labels = [str(label.render()) for label in items[0].query(Label)]
+        assert labels[0] == '#31 Please look'
+        assert labels[1].startswith('widgets · Ada · ✔ 0/1 · ')
+
+        review.focus()
+        await pilot.press('enter')
+        await settle(app, pilot)
+        assert isinstance(app.screen, PullRequestDetailScreen)
+        assert app.screen.pr_id == 31
+        await pilot.press('escape')
+        await settle(app, pilot)
+        calls = [call for call in api.calls if call[0] == 'pull_requests_reviewed_by']
+        assert len(calls) == 2  # Coming back refreshes the list.
+        await pilot.press('r')
+        await settle(app, pilot)
+        calls = [call for call in api.calls if call[0] == 'pull_requests_reviewed_by']
+        assert len(calls) == 3  # So does `r`.
+
+
+async def test_draft_pull_requests_to_review_are_optional():
+    app = make_app(FakeAPI(me='Ada'))
+    app.settings.review_include_drafts = True
+    async with app.run_test(size=(160, 40)) as pilot:
+        await settle(app, pilot)
+        review = app.screen.query_one('#review', ListView)
+        assert [item.pr.id for item in review.children] == [31, 33]
 
 
 async def open_run(app, pilot, number: int) -> PipelineRunScreen:
@@ -1218,3 +1318,140 @@ async def test_idle_timeout_is_off_by_default():
         await app.check_idle_timeout()
         await pilot.pause()
         assert app.screen is detail
+
+
+async def test_diff_cursor_redraws_only_its_lines():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(120, 40)) as pilot:
+        detail = await open_detail(app, pilot)
+        await pilot.press('2')
+        await settle(app, pilot)
+        await pilot.press('enter')
+        await pilot.pause()
+        view = detail.query_one(DiffView)
+        lines = view.query(DiffLines).first()
+
+        def reversed_(y: int) -> bool:
+            return any(s.style and s.style.reverse for s in lines.render_line(y))
+
+        cursor = view.cursor - lines.start
+        assert reversed_(cursor) and not reversed_(cursor + 1)
+        refreshed = []
+        original = lines.refresh
+        lines.refresh = lambda *regions, **kw: (refreshed.extend(regions), original(*regions, **kw))
+        await pilot.press('j')
+        assert not reversed_(cursor) and reversed_(cursor + 1)
+        assert [region.y for region in refreshed] == [cursor, cursor + 1]
+        assert all(region.height == 1 for region in refreshed)
+
+
+async def test_commits_browse_branches_and_open_a_commit():
+    api = FakeAPI()
+    app = make_app(api)
+    repo = Repository.from_api(repository_json('widgets'))
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(PullRequestsScreen(repo))
+        await settle(app, pilot)
+        await pilot.press('C')
+        await settle(app, pilot)
+        screen = app.screen
+        assert isinstance(screen, CommitsScreen)
+        table = screen.query_one(DataTable)
+        # The main branch's history, a page at a time; nearing the end fetches more.
+        assert screen.branch == 'develop' and table.row_count == 30
+        # Tagged commits are labelled as `git log --decorate` does.
+        assert str(table.get_row_at(1)[3]) == '(tag: v1.0, tag: v1.0-final) Change 68 on develop'
+        assert str(table.get_row_at(0)[3]) == 'Change 69 on develop'
+        assert 'more as you scroll' in str(table.border_subtitle)
+        table.move_cursor(row=27)
+        await settle(app, pilot)
+        assert table.row_count == 60
+        assert ('commits', 'develop', None, 'page:30') in api.calls
+
+        # Only the commits not on another branch; Enter on an empty filter shows all again.
+        await pilot.press('x')
+        await settle(app, pilot)
+        assert isinstance(app.screen, BranchChoiceScreen)
+        app.screen.query_one(Input).value = 'ABC-8-old-thing'
+        await pilot.press('enter')
+        await settle(app, pilot)
+        assert app.screen is screen and screen.base == 'ABC-8-old-thing'
+        assert table.row_count == 3 and 'not on ABC-8-old-thing' in str(table.border_title)
+        await pilot.press('x')
+        await settle(app, pilot)
+        await pilot.press('enter')
+        await settle(app, pilot)
+        assert screen.base is None and table.row_count == 30
+
+        # Tags can be picked too, and are listed with branches.
+        await pilot.press('b')
+        await settle(app, pilot)
+        app.screen.query_one(Input).value = 'v1'
+        await pilot.pause(0.4)
+        await settle(app, pilot)
+        options = app.screen.query_one(OptionList)
+        assert [str(options.get_option_at_index(i).prompt) for i in range(2)] == [
+            'v1.0  tag',
+            'v1.0-final  tag',
+        ]
+        await pilot.press('enter')
+        await settle(app, pilot)
+        assert screen.branch == 'v1.0'
+        assert ('refs', 'v1') in api.calls
+        assert api.calls.count(('tags',)) == 1  # Tags are fetched once, not per branch.
+
+        # Another branch; a missing one says so.
+        await pilot.press('b')
+        await settle(app, pilot)
+        app.screen.query_one(Input).value = 'ABC-9-new-thing'
+        await pilot.press('enter')
+        await settle(app, pilot)
+        assert screen.branch == 'ABC-9-new-thing'
+        assert str(table.get_row_at(0)[3]) == 'Change 69 on ABC-9-new-thing'
+
+        # A commit: its message, files and diff.
+        await pilot.press('enter')
+        await pilot.pause(0.2)
+        await settle(app, pilot)
+        commit = app.screen
+        assert isinstance(commit, CommitScreen)
+        assert 'Why 69' in str(commit.query_one('#commit-message Static', Static).render())
+        chooser = commit.query_one('#file-chooser', DataTable)
+        assert chooser.row_count == 2 and app.focused is chooser
+        view = commit.query_one(DiffView)
+        assert '+new' in ''.join(lines.plain for lines in view.query(DiffLines))
+        await pilot.press('right_square_bracket')
+        await pilot.pause(0.2)
+        await settle(app, pilot)
+        assert 'b-new' in ''.join(lines.plain for lines in view.query(DiffLines))
+        await pilot.press('u')
+        await pilot.pause()
+        assert app.screen.url == ('https://bitbucket.org/acme/widgets/commits/ABC69' + 'f' * 34)
+
+
+async def test_commits_of_a_missing_branch():
+    api = FakeAPI()
+    app = make_app(api)
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        repo = Repository.from_api(repository_json('widgets'))
+        app.push_screen(CommitsScreen(repo, branch='nope'))
+        await settle(app, pilot)
+        assert app.screen.query_one(DataTable).row_count == 0
+        assert any("No branch or tag 'nope'" in str(n.message) for n in app._notifications)
+
+
+async def test_a_tagged_commit_shows_its_tags():
+    app = make_app(FakeAPI())
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(CommitsScreen(Repository.from_api(repository_json('widgets'))))
+        await settle(app, pilot)
+        table = app.screen.query_one(DataTable)
+        table.move_cursor(row=1)
+        await pilot.press('enter')
+        await settle(app, pilot)
+        header = str(app.screen.query_one('#commit-message Static', Static).render())
+        assert header.startswith('(tag: v1.0, tag: v1.0-final) Change 68 on develop')

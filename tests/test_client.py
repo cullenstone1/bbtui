@@ -10,7 +10,7 @@ from bbtui.api import (
     NotFoundError,
     PermissionDeniedError,
 )
-from tests.factories import repository_json
+from tests.factories import pull_request_json, repository_json
 
 BASE = 'https://api.example/2.0'
 
@@ -118,6 +118,29 @@ async def test_pull_requests_request_participants():
     await make_api(handler).pull_requests('acme', 'widgets')
     assert seen['fields'] == '+values.participants'
     assert seen['state'] == 'OPEN'
+
+
+async def test_pull_requests_reviewed_by_asks_each_repository_once():
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        assert request.url.params['q'] == 'reviewers.uuid = "{me}" AND state = "OPEN"'
+        assert request.url.params['fields'] == '+values.participants'
+        workspace, slug = request.url.path.split('/')[-3:-1]
+        if slug == 'secret':
+            return httpx.Response(403, json={'error': {'message': 'no'}})
+        day = {'old': '28', 'new': '30'}[slug]
+        pr = pull_request_json(1, f'{workspace}/{slug}', updated_on=f'2026-09-{day}T10:00:00Z')
+        return httpx.Response(200, json={'values': [pr]})
+
+    repos = [('acme', 'old'), ('acme', 'new'), ('acme', 'old'), ('acme', 'secret')]
+    prs = await make_api(handler).pull_requests_reviewed_by(repos, '{me}')
+    # Newest first; a repository you can't read is skipped; duplicates are asked once.
+    assert [pr.repository for pr in prs] == ['acme/new', 'acme/old']
+    assert sorted(paths) == sorted(
+        f'/2.0/repositories/acme/{slug}/pullrequests' for slug in ('old', 'new', 'secret')
+    )
 
 
 async def test_statuses_and_open_tasks():

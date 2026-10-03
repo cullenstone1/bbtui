@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     """Repositories pinned to the dashboard, as `repo_slug` or `workspace/repo_slug`."""
     recent_repos_limit: int = 10
     """How many recently updated repositories to show on the dashboard."""
+    review_include_drafts: bool = False
+    """Whether draft pull requests show under "Waiting for my review" on the dashboard."""
     close_source_branch: bool = False
     """Whether new pull requests close their source branch on merge, by default."""
     syntax_theme: str | None = None

@@ -47,9 +47,11 @@ the credentials and lists your workspaces; `bbtui -w other-workspace` opens anot
 
 ## Features
 
-- **Dashboard**: starred repositories from the config, recently updated repositories,
-  server-side search by repository name, and your open pull requests across the workspace with
-  their approvals, comments and build status.
+- **Dashboard**: pull requests waiting for your review (open, not yet approved by you, drafts
+  optional; looked for in your starred and 50 most recently updated repositories, since
+  Bitbucket has no workspace-wide reviewer query), starred repositories from the config, recently
+  updated repositories, server-side search by repository name, and your open pull requests across the
+  workspace with their approvals, comments and build status.
 - **Pull requests**: open, merged or declined pull requests for a repository, with review status.
 - **Pull request detail**: an overview with merge checks (draft, conflicts, approvals and
   changes requested, builds, open tasks), build statuses (`p` opens the pipeline), reviewers,
@@ -85,6 +87,13 @@ the credentials and lists your workspaces; `bbtui -w other-workspace` opens anot
   your starred repositories. You get a notification when a build on one of your pull requests
   finishes.
 
+- **Commits**: `C` on a repository's pull requests lists a branch's commits (newest first, more
+  loaded as you scroll), with tagged commits labelled `(tag: v1.2)`. `b` switches to another
+  branch or tag, and `x` limits the list to commits that aren't on another branch or tag (e.g.
+  what a feature branch adds over `master`, or what changed between two release tags); both
+  search branches and tags as you type. Enter opens a commit: its
+  message, changed files and one file's diff, as for pull requests (read-only).
+
 - **Idle timeout** (optional): with `idle_timeout_minutes` set, bbtui goes back to the dashboard
   after that many minutes without a key press, click or scroll, but never while you're writing a
   comment, have an unposted comment draft, or have edited a new pull request.
@@ -103,6 +112,7 @@ example is [`src/bbtui/config.example.yaml`](https://github.com/cullenstone1/bbt
 | `workspace` | | The workspace bbtui opens in |
 | `starred_repos` | `[]` | Repositories pinned to the dashboard, as `slug` or `workspace/slug` |
 | `recent_repos_limit` | `10` | Recently updated repositories shown on the dashboard |
+| `review_include_drafts` | `false` | Show drafts under "Waiting for my review" |
 | `close_source_branch` | `false` | Default for "close source branch" on new pull requests |
 | `syntax_theme` | per theme | A Pygments style for diffs, e.g. `monokai`, `github-dark` |
 | `theme` | `textual-dark` | A Textual theme, e.g. `nord`, `gruvbox`, `tokyo-night` |
@@ -126,6 +136,7 @@ otherwise asks the terminal to copy (OSC 52), which tmux only passes on with `se
 | | `s` | Cycle open / merged / declined |
 | | `n` | New pull request |
 | | `P` | The repository's pipelines |
+| | `C` | The repository's commits |
 | | `Esc` | Back |
 | New pull request | `Ctrl+S` | Create |
 | | `↓` (in a branch filter) | Move into the branch list |
@@ -146,6 +157,10 @@ otherwise asks the terminal to copy (OSC 52), which tmux only passes on with `se
 | Pipelines | `m` / `f` | Only mine / only failed (toggles) |
 | | `u` | The highlighted run's URL |
 | | `Enter` | Open the run |
+| Commits | `b` | Choose the branch or tag |
+| | `x` | Only commits not on another branch or tag (Enter on an empty filter shows all) |
+| | `Enter` | Open the commit (files and diff; `[` / `]` previous / next file) |
+| | `u` | The highlighted commit's URL |
 | Pipeline run | `e` / `E` | Next / previous likely failure |
 | | `/`, then `n` / `N` | Search the log, next / previous match |
 | | `R` / `s` | Re-run / stop (asks first) |
@@ -209,7 +224,7 @@ src/bbtui/
   api/client.py     httpx transport: auth, error mapping, pagination
   api/api.py        endpoints returning models
   app.py            the Textual app
-  screens/          dashboard, pull request list, pull request detail
+  screens/          dashboard, pull requests, commits, pipelines, dialogs
   widgets/          comment cards, the single-file diff view
   bbtui.tcss        styles
 ```

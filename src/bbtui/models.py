@@ -283,12 +283,22 @@ class BuildStatus:
 
 @dataclass(frozen=True)
 class Branch:
+    """A branch, or a tag (`is_tag`): both are refs to a commit."""
+
     name: str
     updated_on: datetime | None = None
+    is_tag: bool = False
+    target: str = ''
+    """The hash of the commit the ref points to."""
 
     @classmethod
     def from_api(cls, data: dict) -> 'Branch':
-        return cls(name=data.get('name') or '', updated_on=_datetime(_get(data, 'target', 'date')))
+        return cls(
+            name=data.get('name') or '',
+            updated_on=_datetime(_get(data, 'target', 'date')),
+            is_tag=data.get('type') == 'tag',
+            target=_get(data, 'target', 'hash', default=''),
+        )
 
 
 @dataclass(frozen=True)
@@ -297,6 +307,11 @@ class Commit:
     message: str
     author: str = ''
     date: datetime | None = None
+    parents: tuple[str, ...] = ()
+
+    @property
+    def short_hash(self) -> str:
+        return self.hash[:8]
 
     @property
     def summary(self) -> str:
@@ -310,6 +325,7 @@ class Commit:
             message=data.get('message') or '',
             author=author,
             date=_datetime(data.get('date')),
+            parents=tuple(p['hash'] for p in data.get('parents') or [] if p.get('hash')),
         )
 
 

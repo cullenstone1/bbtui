@@ -9,7 +9,7 @@ from textual.widgets import Footer, Header, Input, Label, ListItem, ListView
 
 from bbtui.api.api import split_repo_name
 from bbtui.merge import build_check
-from bbtui.models import BuildStatus, Pipeline, PullRequest, Repository, Schedule
+from bbtui.models import BuildStatus, Pipeline, PullRequest, Repository, Schedule, same_user
 from bbtui.screens.base import BaseScreen
 from bbtui.screens.pipeline_run import PipelineRunScreen, run_url, status_text
 from bbtui.screens.pull_request_detail import PullRequestDetailScreen
@@ -17,6 +17,9 @@ from bbtui.screens.pull_requests import PullRequestsScreen
 from bbtui.screens.url import UrlScreen
 from bbtui.text import duration, one_line, relative
 from bbtui.watch import WatchedBuild
+
+REVIEW_REPOS_LIMIT = 50
+"""How many recently updated repositories (besides the starred ones) to look for reviews in."""
 
 
 class RepositoryItem(ListItem):
@@ -48,11 +51,17 @@ def build_mark(statuses: list[BuildStatus] | None) -> Text:
 
 
 def pull_request_meta(
-    pr: PullRequest, statuses: list[BuildStatus] | None, current_workspace: str
+    pr: PullRequest,
+    statuses: list[BuildStatus] | None,
+    current_workspace: str,
+    show_author: bool = False,
 ) -> Text:
-    """`repo · ✔ 1/7 ✗1 · 💬 3 · ✔ build · 2 hours ago` (approvals out of reviewers)."""
+    """`repo · ✔ 1/7 ✗1 · 💬 3 · ✔ build · 2 hours ago` (approvals out of reviewers),
+    with the author after the repository if `show_author`."""
     workspace, _, slug = pr.repository.partition('/')
     parts: list[Text] = [Text(one_line(slug if workspace == current_workspace else pr.repository))]
+    if show_author:
+        parts.append(Text(one_line(pr.author.display_name), style='cyan'))
     reviews = Text(
         f'✔ {pr.approvals}/{len(pr.reviewers)}', style='green' if pr.approvals else 'dim'
     )
@@ -68,13 +77,20 @@ def pull_request_meta(
 
 
 class PullRequestItem(ListItem):
-    """One of your pull requests: title on the first line, status on the second."""
+    """A pull request: title on the first line, status on the second."""
 
-    def __init__(self, pr: PullRequest, statuses: list[BuildStatus] | None, current_workspace: str):
+    def __init__(
+        self,
+        pr: PullRequest,
+        statuses: list[BuildStatus] | None,
+        current_workspace: str,
+        show_author: bool = False,
+    ):
         super().__init__()
         self.pr = pr
         self.statuses = statuses
         self.current_workspace = current_workspace
+        self.show_author = show_author
 
     def compose(self) -> ComposeResult:
         title = Text(f'#{self.pr.id} ', style='bold')
@@ -84,7 +100,7 @@ class PullRequestItem(ListItem):
         with Vertical(classes='pr-item'):
             yield Label(title, classes='pr-title')
             yield Label(
-                pull_request_meta(self.pr, self.statuses, self.current_workspace),
+                pull_request_meta(self.pr, self.statuses, self.current_workspace, self.show_author),
                 classes='pr-meta',
             )
 
@@ -132,6 +148,7 @@ class DashboardScreen(BaseScreen):
         yield Input(placeholder='Search repositories by name, then Enter', id='search')
         with Horizontal(id='dashboard'):
             with Vertical(id='repo-column'):
+                yield ListView(id='review')
                 yield ListView(id='starred')
                 yield ListView(id='others')
             with Vertical(id='right-column'):
@@ -142,6 +159,7 @@ class DashboardScreen(BaseScreen):
     def on_mount(self) -> None:
         self.sub_title = self.settings.workspace or ''
         self.query_one('#search', Input).border_title = 'Search'
+        self.query_one('#review', ListView).border_title = 'Waiting for my review'
         self.query_one('#starred', ListView).border_title = 'Starred'
         self.query_one('#others', ListView).border_title = 'Recently updated'
         self.query_one('#mine', ListView).border_title = 'My pull requests'
@@ -154,6 +172,8 @@ class DashboardScreen(BaseScreen):
         # Coming back from a pull request or a run: reviews or builds may have changed.
         if self.query_one('#mine', ListView).children:
             self.load_mine()
+        if self.query_one('#review', ListView).children:
+            self.load_review()
         if self.query_one('#nightly', ListView).children:
             self.load_nightly()
 
@@ -201,6 +221,52 @@ class DashboardScreen(BaseScreen):
                             pr_workspace, pr_slug, pr.id, status.key, f'#{pr.id} {pr.title}'
                         ),
                     )
+
+    @work(exclusive=True, group='review', exit_on_error=False)
+    async def load_review(self) -> None:
+        """Open pull requests you're a reviewer on and haven't approved yet (drafts only if
+        `review_include_drafts`), looked for in your starred and recently updated repositories."""
+        review = self.query_one('#review', ListView)
+        workspace = self.settings.workspace or ''
+        review.loading = not review.children
+        try:
+            me, recent = await asyncio.gather(
+                self.bbtui.current_user(),
+                self.api.recent_repositories(workspace, REVIEW_REPOS_LIMIT),
+            )
+            repos = [split_repo_name(name, workspace) for name in self.settings.starred_repos]
+            repos += [(repo.workspace, repo.slug) for repo in recent]
+            pull_requests = [
+                pr
+                for pr in await self.api.pull_requests_reviewed_by(repos, me.uuid or '')
+                if (self.settings.review_include_drafts or not pr.draft)
+                and not any(p.approved and same_user(p.user, me) for p in pr.participants)
+            ]
+            statuses = await asyncio.gather(
+                *(
+                    self.api.pull_request_statuses(*pr.repository.split('/', 1), pr.id)
+                    for pr in pull_requests
+                ),
+                return_exceptions=True,
+            )
+        except Exception as exc:
+            self.report_error(exc, 'Loading pull requests to review')
+            return
+        finally:
+            review.loading = False
+        index = review.index
+        await review.clear()
+        review.border_subtitle = str(len(pull_requests))
+        if not pull_requests:
+            await review.append(ListItem(Label(Text('Nothing waiting for your review', 'dim'))))
+            return
+        await review.extend(
+            PullRequestItem(
+                pr, result if isinstance(result, list) else None, workspace, show_author=True
+            )
+            for pr, result in zip(pull_requests, statuses, strict=True)
+        )
+        review.index = min(index or 0, len(pull_requests) - 1)
 
     @work(exclusive=True, group='starred', exit_on_error=False)
     async def load_starred(self) -> None:
@@ -264,6 +330,7 @@ class DashboardScreen(BaseScreen):
             await others.append(ListItem(Label(Text('No repositories found', 'dim'))))
 
     def load_dashboard(self) -> None:
+        self.load_review()
         self.load_starred()
         self.load_mine()
         self.load_nightly()
@@ -327,7 +394,7 @@ class DashboardScreen(BaseScreen):
             workspace, slug = event.item.pr.repository.split('/', 1)
             self.app.push_screen(PullRequestDetailScreen(workspace, slug, event.item.pr.id))
 
-    LEFT_LISTS = ('starred', 'others')
+    LEFT_LISTS = ('review', 'starred', 'others')
     RIGHT_LISTS = ('nightly', 'mine')
 
     async def action_vim(self, direction: str) -> None:

@@ -13,11 +13,13 @@ from bbtui.models import Branch
 from bbtui.text import one_line, relative
 
 SEARCH_DELAY = 0.25
+TAG_STYLE = 'bold magenta'
 
 
 class BranchPicker(Vertical):
     """An input with a list of matching branches (most recent first), filtered server-side as
-    you type. Posts `BranchPicker.Chosen` when a branch is picked."""
+    you type, and with `include_tags`, tags too. Posts `BranchPicker.Chosen` when one is
+    picked."""
 
     BINDINGS = [Binding('down', 'focus_list', 'Branches', show=False)]
 
@@ -31,17 +33,28 @@ class BranchPicker(Vertical):
         def control(self) -> 'BranchPicker':
             return self.picker
 
-    def __init__(self, workspace: str, repo_slug: str, **kwargs):
+    def __init__(
+        self,
+        workspace: str,
+        repo_slug: str,
+        allow_empty: bool = False,
+        include_tags: bool = False,
+        **kwargs,
+    ):
         super().__init__(classes='branch-picker', **kwargs)
         self.workspace = workspace
         self.repo_slug = repo_slug
+        self.include_tags = include_tags
+        self.allow_empty = allow_empty
+        """Whether Enter on an empty filter chooses "no branch" (`''`)."""
         self.chosen: str | None = None
         self._suppress_search = False
         self._results_for: str | None = None
         """The filter text the listed branches were fetched for."""
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder='Type to filter branches')
+        what = 'branches and tags' if self.include_tags else 'branches'
+        yield Input(placeholder=f'Type to filter {what}')
         yield OptionList()
 
     def on_mount(self) -> None:
@@ -53,8 +66,10 @@ class BranchPicker(Vertical):
 
     def choose(self, branch: str) -> None:
         """Set the branch programmatically (e.g. a default), posting `Chosen`."""
-        self._suppress_search = True
-        self.query_one(Input).value = branch
+        field = self.query_one(Input)
+        # Setting the same value posts no change, which would leave the next real edit ignored.
+        self._suppress_search = field.value != branch
+        field.value = branch
         self.chosen = branch
         self.post_message(self.Chosen(self, branch))
 
@@ -73,10 +88,10 @@ class BranchPicker(Vertical):
         if not choose_first:
             await asyncio.sleep(SEARCH_DELAY if text else 0)
         options = self.query_one(OptionList)
+        api = self.app.api  # type: ignore[attr-defined]
+        search = api.refs if self.include_tags else api.branches
         try:
-            branches: list[Branch] = await self.app.api.branches(  # type: ignore[attr-defined]
-                self.workspace, self.repo_slug, text
-            )
+            branches: list[Branch] = await search(self.workspace, self.repo_slug, text)
         except Exception as exc:
             options.clear_options()
             options.add_option(
@@ -86,11 +101,14 @@ class BranchPicker(Vertical):
         options.clear_options()
         for branch in branches:
             label = Text(one_line(branch.name))
+            if branch.is_tag:
+                label.append('  tag', style=TAG_STYLE)
             if branch.updated_on:
                 label.append(f'  {relative(branch.updated_on)}', style='dim')
             options.add_option(Option(label, id=branch.name))
         if not branches:
-            options.add_option(Option(Text('No matching branches', 'dim'), disabled=True))
+            what = 'branches or tags' if self.include_tags else 'branches'
+            options.add_option(Option(Text(f'No matching {what}', 'dim'), disabled=True))
         else:
             options.highlighted = 0
         self._results_for = text
@@ -99,13 +117,17 @@ class BranchPicker(Vertical):
                 names = [b.name for b in branches]
                 self.choose(text if text in names else names[0])
             else:
-                self.notify(f'No branch matches {text!r}', severity='warning', markup=False)
+                self.notify(f'Nothing matches {text!r}', severity='warning', markup=False)
 
     @on(Input.Submitted)
     def submitted(self, event: Input.Submitted) -> None:
         event.stop()
         options = self.query_one(OptionList)
         exact = event.value.strip()
+        if not exact and self.allow_empty:
+            self.chosen = ''
+            self.post_message(self.Chosen(self, ''))
+            return
         if self._results_for != exact:
             # The list is still for an older filter; search now and pick from the results.
             self.search(exact, choose_first=True)

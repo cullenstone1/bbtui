@@ -30,6 +30,7 @@ from bbtui.screens.url import UrlScreen
 from bbtui.text import ago, clean, one_line, timestamp
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions, thread_views
 from bbtui.widgets.comments import Thread
+from bbtui.widgets.file_chooser import fill_file_chooser, setup_file_chooser
 
 WRITE_SCOPE_HINT = 'the API token needs the write:pullrequest:bitbucket scope'
 
@@ -40,7 +41,6 @@ REVIEW_MARKS = {
 PIPELINE_URL = re.compile(
     r'bitbucket\.org/(?P<workspace>[^/]+)/(?P<slug>[^/]+)/pipelines/results/(?P<number>\d+)'
 )
-STATUS_STYLES = {'A': 'green', 'D': 'red', 'R': 'yellow', 'M': 'blue'}
 CHECK_MARKS = {'ok': ('✔', 'green'), 'blocked': ('✗', 'red'), 'pending': ('●', 'yellow')}
 EVENT_MARKS = {
     'opened': ('●', 'cyan'),
@@ -213,13 +213,7 @@ class PullRequestDetailScreen(BaseScreen):
         self.query_one('#history').border_title = 'History'
         self.query_one('#general-comments').border_title = 'Comments'
         self.query_one('#diff-view').border_title = 'Diff'
-        chooser = self.query_one('#file-chooser', DataTable)
-        chooser.border_title = 'Files'
-        chooser.add_column('', key='status')
-        chooser.add_column('Path', key='path')
-        chooser.add_column('+', key='added')
-        chooser.add_column('−', key='removed')
-        chooser.add_column('💬', key='comments')
+        setup_file_chooser(self.query_one('#file-chooser', DataTable))
         self.load_pull_request()
 
     @work(exclusive=True, group='detail', exit_on_error=False)
@@ -346,21 +340,8 @@ class PullRequestDetailScreen(BaseScreen):
     def show_file_chooser(self) -> None:
         chooser = self.query_one('#file-chooser', DataTable)
         row = chooser.cursor_row
-        chooser.clear()
-        for index, stat in enumerate(self.diffstat):
-            letter = stat.status_letter
-            comments = sum(len(t) for t in self.threads_for(stat))
-            chooser.add_row(
-                Text(letter, style=f'bold {STATUS_STYLES.get(letter, "magenta")}'),
-                Text(one_line(stat.path)),
-                Text(f'+{stat.lines_added}', style='green'),
-                Text(f'−{stat.lines_removed}', style='red'),
-                Text(str(comments) if comments else ''),
-                key=str(index),
-            )
-        added = sum(s.lines_added for s in self.diffstat)
-        removed = sum(s.lines_removed for s in self.diffstat)
-        chooser.border_subtitle = f'{len(self.diffstat)} files · +{added} −{removed}'
+        counts = [sum(len(t) for t in self.threads_for(stat)) for stat in self.diffstat]
+        fill_file_chooser(chooser, self.diffstat, counts)
         self.query_one(TabbedContent).get_tab('diff').label = f'Diff ({len(self.diffstat)})'
         if self.diffstat:
             chooser.move_cursor(row=min(row, len(self.diffstat) - 1))

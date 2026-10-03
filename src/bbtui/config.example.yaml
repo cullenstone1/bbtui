@@ -27,6 +27,9 @@ starred_repos: []
 # How many recently updated repositories the dashboard shows.
 recent_repos_limit: 10
 
+# Whether draft pull requests show under "Waiting for my review" on the dashboard.
+review_include_drafts: false
+
 # Whether new pull requests close their source branch after merge, by default.
 close_source_branch: false
 

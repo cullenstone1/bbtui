@@ -6,6 +6,7 @@ from textual.widgets import DataTable, Footer, Header
 
 from bbtui.models import PullRequest, Repository
 from bbtui.screens.base import BaseScreen
+from bbtui.screens.commits import CommitsScreen
 from bbtui.screens.create_pull_request import CreatePullRequestScreen
 from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import PullRequestDetailScreen
@@ -34,6 +35,7 @@ class PullRequestsScreen(BaseScreen):
         Binding('u', 'show_url', 'URL'),
         Binding('n', 'new_pull_request', 'New PR'),
         Binding('P', 'pipelines', 'Pipelines'),
+        Binding('C', 'commits', 'Commits'),
     ]
 
     def __init__(self, repo: Repository):
@@ -143,3 +145,6 @@ class PullRequestsScreen(BaseScreen):
 
     def action_pipelines(self) -> None:
         self.app.push_screen(PipelinesScreen(self.repo))
+
+    def action_commits(self) -> None:
+        self.app.push_screen(CommitsScreen(self.repo))
