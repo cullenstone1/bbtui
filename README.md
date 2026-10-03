@@ -6,6 +6,13 @@ review, pull request creation and pipeline monitoring without leaving the termin
 
 MIT licensed. See the [changelog](https://github.com/cullenstone1/bbtui/blob/main/CHANGELOG.md) for what's in each release.
 
+![The bbtui dashboard: pull requests waiting for review, starred and recent repositories, scheduled pipelines and your own pull requests](https://raw.githubusercontent.com/cullenstone1/bbtui/main/docs/screenshots/dashboard.svg)
+
+More screenshots: [a pull request](https://raw.githubusercontent.com/cullenstone1/bbtui/main/docs/screenshots/pull-request.svg), [its diff with inline
+comments](https://raw.githubusercontent.com/cullenstone1/bbtui/main/docs/screenshots/diff.svg), [a repository's pipelines](https://raw.githubusercontent.com/cullenstone1/bbtui/main/docs/screenshots/pipelines.svg) and [a failed
+run's log](https://raw.githubusercontent.com/cullenstone1/bbtui/main/docs/screenshots/pipeline-run.svg). They show made-up demo data (see "Demo and screenshots"
+below).
+
 ## Install
 
 bbtui needs Python 3.12 or newer and runs on Linux and macOS. Install it as a standalone tool
@@ -203,6 +210,16 @@ python3 -m venv .venv
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 .venv/bin/textual run --dev bbtui.app:BBTUI   # with `textual console` in another terminal
 ```
+
+### Demo and screenshots
+
+`python scripts/demo.py` runs bbtui against a made-up `acme` workspace: the real app, with its
+HTTP client answered from canned data instead of Bitbucket. It needs no account and ignores your
+config file, `BBTUI_*` variables and git checkout, so it's safe to record or show.
+
+`python scripts/screenshots.py` saves SVG screenshots of the demo to `docs/screenshots/` (rerun
+it after UI changes). It refuses to write anything if the app asked for data the demo doesn't
+have; `tests/test_demo.py` checks the same, so CI notices when the demo falls behind the app.
 
 ### Layout
 
