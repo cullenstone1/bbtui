@@ -8,6 +8,16 @@ def test_repository_from_api():
     assert repo.workspace == 'acme'
     assert repo.main_branch == 'develop'
     assert repo.updated_on is not None and repo.updated_on.year == 2026
+    # Without clone links from the API, they're built from the name.
+    assert repo.clone_https == 'https://bitbucket.org/acme/widgets.git'
+    assert repo.clone_ssh == 'git@bitbucket.org:acme/widgets.git'
+    links = [
+        {'name': 'https', 'href': 'https://ada@bitbucket.org/acme/widgets.git'},
+        {'name': 'ssh', 'href': 'git@bitbucket.org:acme/widgets.git'},
+    ]
+    data = repository_json('widgets')
+    repo = Repository.from_api({**data, 'links': {**data['links'], 'clone': links}})
+    assert repo.clone_https == 'https://ada@bitbucket.org/acme/widgets.git'
 
 
 def test_pull_request_from_api():

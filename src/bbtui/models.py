@@ -67,10 +67,20 @@ class Repository:
     updated_on: datetime | None = None
     main_branch: str | None = None
     html_url: str | None = None
+    clone_links: tuple[tuple[str, str], ...] = ()
+    """`(name, href)` pairs from the API: `https` (with your username) and `ssh`."""
 
     @property
     def workspace(self) -> str:
         return self.full_name.split('/', 1)[0]
+
+    @property
+    def clone_https(self) -> str:
+        return dict(self.clone_links).get('https') or f'https://bitbucket.org/{self.full_name}.git'
+
+    @property
+    def clone_ssh(self) -> str:
+        return dict(self.clone_links).get('ssh') or f'git@bitbucket.org:{self.full_name}.git'
 
     @classmethod
     def from_api(cls, data: dict) -> 'Repository':
@@ -84,6 +94,11 @@ class Repository:
             updated_on=_datetime(data.get('updated_on')),
             main_branch=_get(data, 'mainbranch', 'name'),
             html_url=_get(data, 'links', 'html', 'href'),
+            clone_links=tuple(
+                (link['name'], link['href'])
+                for link in _get(data, 'links', 'clone', default=[])
+                if link.get('name') and link.get('href')
+            ),
         )
 
 

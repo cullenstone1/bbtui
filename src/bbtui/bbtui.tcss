@@ -407,8 +407,9 @@ MergeScreen {
     margin-left: 2;
 }
 
-/* URL dialog */
-UrlScreen {
+/* URL and clone dialogs */
+UrlScreen,
+CloneScreen {
     align: center middle;
     background: $background 60%;
 }
@@ -427,6 +428,16 @@ UrlScreen {
 #url-text {
     width: auto;
     margin-bottom: 1;
+}
+
+#clone-links {
+    width: auto;
+    height: auto;
+    margin-bottom: 1;
+}
+
+#clone-links Static {
+    width: auto;
 }
 
 #url-buttons {

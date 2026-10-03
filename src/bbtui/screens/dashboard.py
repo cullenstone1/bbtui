@@ -14,7 +14,7 @@ from bbtui.screens.base import BaseScreen
 from bbtui.screens.pipeline_run import PipelineRunScreen, run_url, status_text
 from bbtui.screens.pull_request_detail import PullRequestDetailScreen
 from bbtui.screens.pull_requests import PullRequestsScreen
-from bbtui.screens.url import UrlScreen
+from bbtui.screens.url import CloneScreen, UrlScreen
 from bbtui.text import duration, one_line, relative
 from bbtui.watch import WatchedBuild
 
@@ -140,6 +140,7 @@ class DashboardScreen(BaseScreen):
         Binding('slash', 'focus_search', 'Search'),
         Binding('r', 'refresh', 'Refresh'),
         Binding('u', 'show_url', 'URL'),
+        Binding('c', 'clone', 'Clone'),
         Binding('escape', 'clear_search', 'Clear search', show=False),
     ]
 
@@ -434,6 +435,25 @@ class DashboardScreen(BaseScreen):
             self.app.push_screen(UrlScreen(f'{item.repo.slug} #{item.run.build_number}', url))
         elif isinstance(item, RepositoryItem) and item.repo.html_url:
             self.app.push_screen(UrlScreen(one_line(item.repo.full_name), item.repo.html_url))
+
+    def action_clone(self) -> None:
+        """Clone links for the highlighted repository, or a pull request's repository."""
+        focused = self.focused
+        item = focused.highlighted_child if isinstance(focused, ListView) else None
+        if isinstance(item, RepositoryItem | NightlyItem):
+            self.app.push_screen(CloneScreen(item.repo))
+        elif isinstance(item, PullRequestItem):
+            self.clone_repository(item.pr.repository)
+
+    @work(group='clone', exit_on_error=False)
+    async def clone_repository(self, full_name: str) -> None:
+        """Pull request rows only know the repository's name, so fetch its links first."""
+        try:
+            repo = await self.api.repository(*full_name.split('/', 1))
+        except Exception as exc:
+            self.report_error(exc, 'Loading the repository')
+            return
+        self.app.push_screen(CloneScreen(repo))
 
     def action_focus_search(self) -> None:
         self.query_one('#search', Input).focus()

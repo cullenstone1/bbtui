@@ -137,6 +137,7 @@ otherwise asks the terminal to copy (OSC 52), which tmux only passes on with `se
 | | `u` | Show the URL of the pull request, run or repository (`y` copies, `o` opens) |
 | Dashboard | `/` | Search repositories (Enter to run, Esc to clear) |
 | | `Enter` | Open the repository's pull requests, or your pull request |
+| | `c` | Clone links for the highlighted repository (or the pull request's): `h` copies HTTPS, `s` SSH |
 | | `Tab` | Move between panels |
 | | `r` | Refresh |
 | Pull requests | `Enter` | Open the pull request |
@@ -144,6 +145,7 @@ otherwise asks the terminal to copy (OSC 52), which tmux only passes on with `se
 | | `n` | New pull request |
 | | `P` | The repository's pipelines |
 | | `C` | The repository's commits |
+| | `c` | The repository's clone links (`h` copies HTTPS, `s` SSH) |
 | | `Esc` | Back |
 | New pull request | `Ctrl+S` | Create |
 | | `↓` (in a branch filter) | Move into the branch list |

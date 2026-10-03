@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `c` on the dashboard or a repository's pull requests shows the repository's HTTPS and SSH
+  clone links; `h` / `s` copies one.
+
 ## [0.1.0]
 
 First release.

@@ -10,7 +10,7 @@ from bbtui.screens.commits import CommitsScreen
 from bbtui.screens.create_pull_request import CreatePullRequestScreen
 from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import PullRequestDetailScreen
-from bbtui.screens.url import UrlScreen
+from bbtui.screens.url import CloneScreen, UrlScreen
 from bbtui.text import ago, one_line, truncate
 
 STATES = ('OPEN', 'MERGED', 'DECLINED')
@@ -33,6 +33,7 @@ class PullRequestsScreen(BaseScreen):
         Binding('r', 'refresh', 'Refresh'),
         Binding('s', 'cycle_state', 'State'),
         Binding('u', 'show_url', 'URL'),
+        Binding('c', 'clone', 'Clone'),
         Binding('n', 'new_pull_request', 'New PR'),
         Binding('P', 'pipelines', 'Pipelines'),
         Binding('C', 'commits', 'Commits'),
@@ -124,6 +125,9 @@ class PullRequestsScreen(BaseScreen):
             self.app.push_screen(UrlScreen(f'#{pr.id} {one_line(pr.title)}', pr.url))
         elif self.repo.html_url:
             self.app.push_screen(UrlScreen(one_line(self.repo.full_name), self.repo.html_url))
+
+    def action_clone(self) -> None:
+        self.app.push_screen(CloneScreen(self.repo))
 
     def on_screen_resume(self) -> None:
         # Coming back from a pull request: it may have been merged, approved or marked ready.

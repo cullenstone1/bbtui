@@ -40,7 +40,7 @@ from bbtui.screens.merge import MergeScreen
 from bbtui.screens.pipeline_run import PipelineRunScreen
 from bbtui.screens.pipelines import PipelinesScreen
 from bbtui.screens.pull_request_detail import known_names
-from bbtui.screens.url import UrlScreen
+from bbtui.screens.url import CloneScreen, UrlScreen
 from bbtui.widgets import CommentView, DiffView, comment_threads, resolve_mentions
 from bbtui.widgets.diff_view import DiffLines
 from bbtui.widgets.log_view import LogView
@@ -146,6 +146,15 @@ class FakeAPI:
 
     async def aclose(self):
         pass
+
+    async def repository(self, workspace, repo_slug):
+        self.calls.append(('repository', workspace, repo_slug))
+        clone = [
+            {'name': 'https', 'href': f'https://ada@bitbucket.org/{workspace}/{repo_slug}.git'},
+            {'name': 'ssh', 'href': f'git@bitbucket.org:{workspace}/{repo_slug}.git'},
+        ]
+        data = repository_json(repo_slug, workspace)
+        return Repository.from_api({**data, 'links': {**data['links'], 'clone': clone}})
 
     async def repositories(self, names, default_workspace):
         found = [Repository.from_api(repository_json(name)) for name in names if name != 'ghost']
@@ -1135,6 +1144,45 @@ async def show_url(app, pilot) -> str:
     await pilot.press('escape')
     await pilot.pause()
     return url
+
+
+async def test_clone_links(monkeypatch):
+    api = FakeAPI(me='Ada')
+    app = make_app(api)
+    copied: list[str] = []
+    async with app.run_test(size=(160, 45)) as pilot:
+        monkeypatch.setattr('bbtui.screens.url.copy_with_tool', copied.append)
+        await settle(app, pilot)
+
+        # A repository on the dashboard; without clone links from the API, they're built.
+        app.screen.query_one('#starred', ListView).focus()
+        await pilot.press('c')
+        await pilot.pause()
+        assert isinstance(app.screen, CloneScreen)
+        await pilot.press('s')
+        await pilot.pause()
+        assert copied == ['git@bitbucket.org:acme/widgets.git']
+        assert not isinstance(app.screen, CloneScreen)
+
+        # A pull request on the dashboard: its repository is fetched for the links.
+        app.screen.query_one('#mine', ListView).focus()
+        await pilot.press('c')
+        await settle(app, pilot)
+        assert ('repository', 'acme', 'widgets') in api.calls
+        await pilot.press('h')
+        await pilot.pause()
+        assert copied[-1] == 'https://ada@bitbucket.org/acme/widgets.git'
+
+        # The pull request list: its repository; Esc closes without copying.
+        app.push_screen(PullRequestsScreen(await api.repository('acme', 'gadgets')))
+        await settle(app, pilot)
+        await pilot.press('c')
+        await pilot.pause()
+        assert isinstance(app.screen, CloneScreen)
+        assert app.screen.links['ssh'] == 'git@bitbucket.org:acme/gadgets.git'
+        await pilot.press('escape')
+        await pilot.pause()
+        assert isinstance(app.screen, PullRequestsScreen) and len(copied) == 2
 
 
 async def test_url_hotkey_everywhere(monkeypatch):
